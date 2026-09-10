@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAP-Arena Web Simulator</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <script src="/static/build_guard.js" defer></script>
+</head>
+<body>
+  <div class="wrap">
+    <!-- ================= the shop scene ================= -->
+    <div class="stage" id="stage">
+    <div class="scene" id="scene">
+      <div class="hud">
+        <div class="stats" id="stats"></div>
+      </div>
+      <div class="hud-right">
+        <span class="mode-tile" id="mode-tag" title="game mode"></span>
+        <button id="btn-recommend" class="hud-btn"><span>Recommend</span></button>
+      </div>
+
+      <div class="lane" id="team-lane">
+        <div id="team" class="lane-row team-row"></div>
+        <div class="signpost">
+          <i class="post"></i>
+          <i class="shadow"></i>
+          <span class="plank"><span class="label">Battle</span></span>
+          <i class="nail nail-a"></i><i class="nail nail-b"></i>
+        </div>
+      </div>
+
+      <div class="lane" id="shop-lane">
+        <div class="signpost">
+          <i class="post"></i>
+          <i class="shadow"></i>
+          <span class="plank"><span class="label">Shop</span></span>
+          <i class="nail nail-a"></i><i class="nail nail-b"></i>
+        </div>
+        <div id="shop" class="lane-row shop-row"></div>
+      </div>
+
+      <!-- the game's own selection card: name, tier, ability -->
+      <div id="info-card" class="info-card"></div>
+
+      <div class="action-bar">
+        <button id="btn-roll" class="action-btn" title="Roll the shop for 1 gold">
+          <span class="btn-label">Roll</span>
+          <span class="cost-die" id="roll-cost-die" aria-hidden="true"></span>
+        </button>
+        <div class="action-right">
+          <button id="btn-context-action" class="action-btn wide contextual is-idle" data-mode="">
+            <span class="btn-label" id="btn-context-label">Context</span>
+            <span id="btn-context-icon" aria-hidden="true"></span>
+          </button>
+          <button id="btn-end-turn" class="action-btn wide">
+            <span class="btn-label">End turn</span>
+            <span id="end-turn-icon" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+
+      <div id="toast" class="toast">
+        <span class="toast-text" id="toast-text"></span>
+        <button class="toast-close" id="toast-close" type="button" title="Dismiss"></button>
+      </div>
+    </div>
+    </div>
+
+    <!-- ============ verification surfaces + dev tooling ============
+         The recommendation panel is the primary inspection surface, so it is
+         always open. Everything below it collapses, and the debug tooling
+         starts collapsed so the first screenful is the game. -->
+    <div class="below">
+      <!-- What this server is serving, filled in from /api/state's `surface`
+           block. It is first because "which code is this?" is the question a
+           stale deployment makes you unable to answer. -->
+      <div class="panel">
+        <h3 style="margin:0 0 8px;">Serving</h3>
+        <div id="build-line" class="tiny"></div>
+      </div>
+
+      <div class="panel">
+        <h3 style="margin:0 0 8px;">Tempo Recommendation</h3>
+        <div id="recommendation" class="tiny">No recommendation yet.</div>
+      </div>
+
+      <details class="panel drawer" id="drawer-battle" open>
+        <summary>Last Battle</summary>
+        <div class="drawer-body">
+          <div id="last-battle" class="battle-summary"><span class="tiny">No battle yet.</span></div>
+        </div>
+      </details>
+
+      <details class="devzone drawer" id="drawer-dev">
+        <summary>Dev tooling</summary>
+        <div class="drawer-body">
+        <div class="row">
+          <button id="btn-reset">Reset</button>
+          <button id="btn-undo">Undo</button>
+          <button id="btn-refresh">Refresh</button>
+          <button id="btn-add-chocolate">Add Chocolate (Debug)</button>
+        </div>
+        <div class="debug-controls">
+          <label class="tiny">Add Pet
+            <input id="debug-pet-search" type="text" placeholder="Search pet by name..." />
+            <select id="debug-pet-select"></select>
+          </label>
+          <button id="btn-add-debug-pet">Add Selected Pet</button>
+          <label class="tiny">Add Food
+            <input id="debug-food-search" type="text" placeholder="Search food by name..." />
+            <select id="debug-food-select"></select>
+          </label>
+          <button id="btn-add-debug-food">Add Selected Food</button>
+        </div>
+        <div id="messages" class="messages"></div>
+        <div><span class="hint">Drag a shop item onto a team slot to buy or feed. Drag a team pet onto another slot to reorder or combine, onto the middle slab to sell. Right-click a shop slot, or click its tier die, to freeze.</span></div>
+
+        <div class="devgrid">
+          <div class="devbox">
+            <div class="row" style="justify-content:space-between;">
+              <strong class="tiny">Legal Actions (click to apply)</strong>
+              <label class="tiny">Filter
+                <select id="action-filter">
+                  <option value="ALL">ALL</option>
+                  <option>BUY_PET</option>
+                  <option>BUY_COMBINE</option>
+                  <option>BUY_FOOD</option>
+                  <option>SELL</option>
+                  <option>COMBINE</option>
+                  <option>REORDER</option>
+                  <option>FREEZE</option>
+                  <option>UNFREEZE</option>
+                  <option>ROLL</option>
+                  <option>END_TURN</option>
+                </select>
+              </label>
+            </div>
+            <div id="legal-actions" class="legal-actions"></div>
+          </div>
+
+          <div class="devbox">
+            <strong class="tiny">History</strong>
+            <div id="history" class="history"></div>
+          </div>
+
+          <div class="devbox">
+            <strong class="tiny">Try Custom Action (can show invalid)</strong>
+            <textarea id="custom-action">{"type":"ROLL"}</textarea>
+            <div class="row" style="margin-top:6px;">
+              <button class="primary" id="btn-apply-custom">Apply Custom Action</button>
+            </div>
+            <div style="margin-top:4px;"><span class="hint">Example: {"type":"BUY_PET","shop_index":0,"team_index":0}</span></div>
+          </div>
+        </div>
+        </div>
+      </details>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

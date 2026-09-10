@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 48" width="120" height="48" role="img" aria-label="Turn">
+  <rect x="1" y="1" width="118" height="46" rx="10" fill="#2b3a4a" stroke="#7fa8c9" stroke-width="2"/>
+  <text x="60" y="31" font-family="system-ui,sans-serif" font-size="20" font-weight="600"
+        fill="#e8f1f8" text-anchor="middle">TURN</text>
+</svg>

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAP-Arena</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/duel.css" />
+  <script src="/static/build_guard.js" defer></script>
+</head>
+<body class="duel-body">
+  <div class="menu">
+    <div class="menu-card">
+      <h1 class="menu-title">Super Auto Pets vs the agent</h1>
+      <p class="menu-sub">Turtle pack, versus rules: 6 lives a side, one shared battle a turn, first to zero loses.</p>
+      <div class="menu-actions">
+        <a class="menu-btn" id="menu-play" href="/play">Play</a>
+        <a class="menu-btn secondary" id="menu-replays" href="/replays">Replays</a>
+      </div>
+    </div>
+
+    <div class="menu-card menu-note">
+      <p>
+        <b>Who you are playing.</b> The exp13 baseline, which is exp12's champion arm C:
+        a behaviour-clone proposer, best-of-N over whole-turn chains, scored by the learned
+        V head on the end-of-turn board. It re-searches after every action the engine calls
+        random, and it thinks on its own imagination stream, so it cannot see your shop rolls
+        before they happen.
+      </p>
+      <p>
+        <b>It thinks while you shop.</b> Pressing <b>End turn</b> stops it at the next chunk
+        boundary and it finishes the rest of that turn greedily, so the duel page always tells
+        you how many segments it actually searched. Turn the "wait for a full turn" switch on
+        if you would rather wait for its full strength.
+      </p>
+      <p>
+        <b>Free practice</b> against a sampled human board, with the recommendation panel and
+        the dev tooling, is still at <a href="/sandbox">/sandbox</a>. The archived human replays
+        are at <a href="/replay">/replay</a>.
+      </p>
+    </div>
+  </div>
+</body>
+</html>

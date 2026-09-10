@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAP-Arena Replays</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/duel.css" />
+  <script src="/static/build_guard.js" defer></script>
+</head>
+<body class="duel-body replay-body">
+  <header class="replay-topbar">
+    <div>
+      <h1 class="menu-title">Replays</h1>
+      <p class="menu-sub">Every settled turn is saved before the next one starts.</p>
+    </div>
+    <nav class="menu-actions">
+      <a class="menu-btn" href="/play">Play</a>
+      <a class="menu-btn secondary" href="/">Menu</a>
+    </nav>
+  </header>
+  <main class="replay-browser">
+    <aside class="replay-list-panel">
+      <input id="replay-search" class="replay-search" type="search" placeholder="seed, winner, commit…" />
+      <div id="replay-list" class="replay-list" aria-live="polite"></div>
+    </aside>
+    <section class="replay-detail-panel">
+      <div class="menu-empty" id="replays-empty">No games have been archived yet. Finish a turn in Play and it will appear here.</div>
+      <div id="replay-meta" class="replay-meta" hidden></div>
+      <div id="replay-turns" class="replay-turns"></div>
+    </section>
+  </main>
+  <footer class="replay-legacy-note">
+    Scraped human games still use the untouched <a href="/replay">human replay player</a>.
+    <span class="replay-storage-note">Stored on the server data disk, not browser localStorage. Browser clearing and service restarts do not remove acknowledged turns; there is currently no off-host backup.</span>
+  </footer>
+  <script src="/static/search_telemetry.js"></script>
+  <script src="/static/replays.js"></script>
+</body>
+</html>

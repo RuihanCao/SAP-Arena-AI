@@ -1,0 +1,21 @@
+{
+  "benchmark_python_tree": "f5291a73ac2f4d5973244b38ca7e016adf7031fa",
+  "benchmark_source_commit": "edc3c7ba9c0d087df4d789f8b86c20f27effc4be",
+  "demo_source_commit": "b98805e33438be7bc438497c7928ccda35f521f8",
+  "demo_source_files": [
+    "python/sap_ppo/tools/play_web/agent.py",
+    "python/sap_ppo/tools/play_web/cli.py",
+    "python/sap_ppo/tools/play_web/duel_app.py",
+    "python/sap_ppo/tools/play_web/replay_view.py",
+    "python/sap_ppo/tools/play_web/value_probe.py",
+    "python/sap_ppo/tools/play_web/static/duel.js",
+    "python/sap_ppo/tools/play_web/static/play.html",
+    "python/sap_ppo/tools/play_web/static/search_telemetry.js"
+  ],
+  "modules": 78,
+  "overlay_files": 25,
+  "package_files": 103,
+  "pool_games": 268,
+  "pool_turns": 3096,
+  "total_files": 128
+}

@@ -1,0 +1,596 @@
+{
+  "case_id": "sample_case",
+  "initial_state": {
+    "pack": "Turtle",
+    "turn": 1,
+    "gold": 10,
+    "lives": 6,
+    "trophies": 0,
+    "team": [
+      {
+        "slot_index": 0,
+        "pet_id": null,
+        "attack": 0,
+        "health": 0,
+        "level": 1,
+        "exp": 0,
+        "equipment_id": null,
+        "status_effects": []
+      },
+      {
+        "slot_index": 1,
+        "pet_id": null,
+        "attack": 0,
+        "health": 0,
+        "level": 1,
+        "exp": 0,
+        "equipment_id": null,
+        "status_effects": []
+      },
+      {
+        "slot_index": 2,
+        "pet_id": null,
+        "attack": 0,
+        "health": 0,
+        "level": 1,
+        "exp": 0,
+        "equipment_id": null,
+        "status_effects": []
+      },
+      {
+        "slot_index": 3,
+        "pet_id": null,
+        "attack": 0,
+        "health": 0,
+        "level": 1,
+        "exp": 0,
+        "equipment_id": null,
+        "status_effects": []
+      },
+      {
+        "slot_index": 4,
+        "pet_id": null,
+        "attack": 0,
+        "health": 0,
+        "level": 1,
+        "exp": 0,
+        "equipment_id": null,
+        "status_effects": []
+      }
+    ],
+    "shop": [
+      {
+        "shop_index": 0,
+        "slot_type": "pet",
+        "item_id": "pet-horse",
+        "cost": 3,
+        "frozen": false
+      },
+      {
+        "shop_index": 1,
+        "slot_type": "pet",
+        "item_id": "pet-beaver",
+        "cost": 3,
+        "frozen": false
+      },
+      {
+        "shop_index": 2,
+        "slot_type": "pet",
+        "item_id": "pet-mosquito",
+        "cost": 3,
+        "frozen": false
+      },
+      {
+        "shop_index": 3,
+        "slot_type": "food",
+        "item_id": "food-honey",
+        "cost": 3,
+        "frozen": false
+      }
+    ],
+    "meta": {
+      "game_mode": "versus",
+      "versus": {
+        "opponent_lives": 6
+      },
+      "seed_known": false,
+      "source": "sapai-main",
+      "version": "v1",
+      "oracle": {
+        "player_state": {
+          "type": "Player",
+          "team": {
+            "type": "Team",
+            "battle": false,
+            "team": [
+              {
+                "type": "TeamSlot",
+                "pet": {
+                  "type": "Pet",
+                  "name": "pet-none",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": "none",
+                  "health": "none",
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                }
+              },
+              {
+                "type": "TeamSlot",
+                "pet": {
+                  "type": "Pet",
+                  "name": "pet-none",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": "none",
+                  "health": "none",
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                }
+              },
+              {
+                "type": "TeamSlot",
+                "pet": {
+                  "type": "Pet",
+                  "name": "pet-none",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": "none",
+                  "health": "none",
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                }
+              },
+              {
+                "type": "TeamSlot",
+                "pet": {
+                  "type": "Pet",
+                  "name": "pet-none",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": "none",
+                  "health": "none",
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                }
+              },
+              {
+                "type": "TeamSlot",
+                "pet": {
+                  "type": "Pet",
+                  "name": "pet-none",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": "none",
+                  "health": "none",
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                }
+              }
+            ],
+            "pack": "StandardPack"
+          },
+          "shop": {
+            "type": "Shop",
+            "slots": [
+              {
+                "type": "ShopSlot",
+                "slot_type": "pet",
+                "obj": {
+                  "type": "Pet",
+                  "name": "pet-horse",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": 2,
+                  "health": 1,
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                },
+                "turn": 1,
+                "pack": "StandardPack",
+                "cost": 3,
+                "frozen": false,
+                "seed_state": null
+              },
+              {
+                "type": "ShopSlot",
+                "slot_type": "pet",
+                "obj": {
+                  "type": "Pet",
+                  "name": "pet-beaver",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": 3,
+                  "health": 2,
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                },
+                "turn": 1,
+                "pack": "StandardPack",
+                "cost": 3,
+                "frozen": false,
+                "seed_state": null
+              },
+              {
+                "type": "ShopSlot",
+                "slot_type": "pet",
+                "obj": {
+                  "type": "Pet",
+                  "name": "pet-mosquito",
+                  "eaten": false,
+                  "shop": {},
+                  "team": {},
+                  "player": {},
+                  "trigger_counter": 0,
+                  "override_ability": false,
+                  "override_ability_dict": {},
+                  "attack": 2,
+                  "health": 2,
+                  "until_end_of_battle_attack_buff": 0,
+                  "until_end_of_battle_health_buff": 0,
+                  "status": "none",
+                  "level": 1,
+                  "experience": 0,
+                  "seed_state": null
+                },
+                "turn": 1,
+                "pack": "StandardPack",
+                "cost": 3,
+                "frozen": false,
+                "seed_state": null
+              },
+              {
+                "type": "ShopSlot",
+                "slot_type": "food",
+                "obj": {
+                  "type": "Food",
+                  "name": "food-honey",
+                  "eaten": false,
+                  "attack": 0,
+                  "health": 0,
+                  "apply_until_end_of_battle": false,
+                  "seed_state": null
+                },
+                "turn": 1,
+                "pack": "StandardPack",
+                "cost": 3,
+                "frozen": false,
+                "seed_state": null
+              }
+            ],
+            "turn": 1,
+            "shop_attack": 0,
+            "shop_health": 0,
+            "pack": "StandardPack",
+            "seed_state": null,
+            "fixed_rules": false
+          },
+          "lives": 6,
+          "default_gold": 10,
+          "gold": 10,
+          "lf_winner": null,
+          "pack": "StandardPack",
+          "turn": 1,
+          "action_history": [],
+          "wins": 0
+        }
+      }
+    }
+  },
+  "actions": [
+    {
+      "type": "FREEZE",
+      "shop_index": 0
+    },
+    {
+      "type": "ROLL"
+    }
+  ],
+  "oracle": {
+    "player_state": {
+      "type": "Player",
+      "team": {
+        "type": "Team",
+        "battle": false,
+        "team": [
+          {
+            "type": "TeamSlot",
+            "pet": {
+              "type": "Pet",
+              "name": "pet-none",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": "none",
+              "health": "none",
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            }
+          },
+          {
+            "type": "TeamSlot",
+            "pet": {
+              "type": "Pet",
+              "name": "pet-none",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": "none",
+              "health": "none",
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            }
+          },
+          {
+            "type": "TeamSlot",
+            "pet": {
+              "type": "Pet",
+              "name": "pet-none",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": "none",
+              "health": "none",
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            }
+          },
+          {
+            "type": "TeamSlot",
+            "pet": {
+              "type": "Pet",
+              "name": "pet-none",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": "none",
+              "health": "none",
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            }
+          },
+          {
+            "type": "TeamSlot",
+            "pet": {
+              "type": "Pet",
+              "name": "pet-none",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": "none",
+              "health": "none",
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            }
+          }
+        ],
+        "pack": "StandardPack"
+      },
+      "shop": {
+        "type": "Shop",
+        "slots": [
+          {
+            "type": "ShopSlot",
+            "slot_type": "pet",
+            "obj": {
+              "type": "Pet",
+              "name": "pet-horse",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": 2,
+              "health": 1,
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            },
+            "turn": 1,
+            "pack": "StandardPack",
+            "cost": 3,
+            "frozen": false,
+            "seed_state": null
+          },
+          {
+            "type": "ShopSlot",
+            "slot_type": "pet",
+            "obj": {
+              "type": "Pet",
+              "name": "pet-beaver",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": 3,
+              "health": 2,
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            },
+            "turn": 1,
+            "pack": "StandardPack",
+            "cost": 3,
+            "frozen": false,
+            "seed_state": null
+          },
+          {
+            "type": "ShopSlot",
+            "slot_type": "pet",
+            "obj": {
+              "type": "Pet",
+              "name": "pet-mosquito",
+              "eaten": false,
+              "shop": {},
+              "team": {},
+              "player": {},
+              "trigger_counter": 0,
+              "override_ability": false,
+              "override_ability_dict": {},
+              "attack": 2,
+              "health": 2,
+              "until_end_of_battle_attack_buff": 0,
+              "until_end_of_battle_health_buff": 0,
+              "status": "none",
+              "level": 1,
+              "experience": 0,
+              "seed_state": null
+            },
+            "turn": 1,
+            "pack": "StandardPack",
+            "cost": 3,
+            "frozen": false,
+            "seed_state": null
+          },
+          {
+            "type": "ShopSlot",
+            "slot_type": "food",
+            "obj": {
+              "type": "Food",
+              "name": "food-honey",
+              "eaten": false,
+              "attack": 0,
+              "health": 0,
+              "apply_until_end_of_battle": false,
+              "seed_state": null
+            },
+            "turn": 1,
+            "pack": "StandardPack",
+            "cost": 3,
+            "frozen": false,
+            "seed_state": null
+          }
+        ],
+        "turn": 1,
+        "shop_attack": 0,
+        "shop_health": 0,
+        "pack": "StandardPack",
+        "seed_state": null,
+        "fixed_rules": false
+      },
+      "lives": 6,
+      "default_gold": 10,
+      "gold": 10,
+      "lf_winner": null,
+      "pack": "StandardPack",
+      "turn": 1,
+      "action_history": [],
+      "wins": 0
+    }
+  }
+}

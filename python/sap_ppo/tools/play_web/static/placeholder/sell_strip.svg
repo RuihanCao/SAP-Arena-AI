@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 56" width="240" height="56" role="img" aria-label="Roll, sell, end turn">
+  <rect x="1" y="1" width="76" height="54" rx="10" fill="#4a3f6b" stroke="#b3a4e0" stroke-width="2"/>
+  <text x="39" y="34" font-family="system-ui,sans-serif" font-size="15" font-weight="600" fill="#efeaff" text-anchor="middle">ROLL</text>
+  <rect x="82" y="1" width="76" height="54" rx="10" fill="#6b3f3f" stroke="#e0a4a4" stroke-width="2"/>
+  <text x="120" y="34" font-family="system-ui,sans-serif" font-size="15" font-weight="600" fill="#ffeaea" text-anchor="middle">SELL</text>
+  <rect x="163" y="1" width="76" height="54" rx="10" fill="#3d6b4a" stroke="#8fd6a4" stroke-width="2"/>
+  <text x="201" y="34" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#eafaf0" text-anchor="middle">END</text>
+</svg>

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sap-arena.local/schemas/transition_v1.json",
+  "title": "SAP Transition v1",
+  "type": "object",
+  "$defs": {
+    "state_v1": {
+      "$ref": "state_v1.json"
+    },
+    "action_v1": {
+      "$ref": "action_v1.json"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "state_before",
+    "action",
+    "state_after",
+    "deterministic",
+    "stochastic_reason",
+    "stochastic_structural",
+    "legal",
+    "engine_notes"
+  ],
+  "properties": {
+    "state_before": {
+      "$ref": "#/$defs/state_v1"
+    },
+    "action": {
+      "$ref": "#/$defs/action_v1"
+    },
+    "state_after": {
+      "$ref": "#/$defs/state_v1"
+    },
+    "deterministic": { "type": "boolean" },
+    "stochastic_reason": { "type": ["string", "null"] },
+    "stochastic_structural": { "type": "boolean" },
+    "legal": { "type": "boolean" },
+    "engine_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

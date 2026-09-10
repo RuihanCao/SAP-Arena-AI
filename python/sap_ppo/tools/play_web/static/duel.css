@@ -1,0 +1,774 @@
+/* exp16 W5: the duel page's own chrome.
+
+   `app.css` owns the shop scene and every card inside it; this file adds only
+   what a duel needs around it -- the score bar, the opponent lane, the
+   thinking badge, the per-turn table and the end screen -- in the same visual
+   language (pure black keylines, parchment panels, the SAPUI face). Nothing
+   here restyles a `.card`, a lane or a slab, so the skin the shop page is
+   judged on is literally the same skin here. */
+
+.duel-body {
+  background: var(--footer);
+}
+
+/* W6c2 scoped light replay override. */
+.replay-body { --replay-bg:#f5f0e6; --replay-paper:#fffdf8; --replay-ink:#26343a; --replay-muted:#65747a; --replay-line:#d8cdbb; --replay-accent:#cf6d36; min-height:100vh; color:var(--replay-ink); background:linear-gradient(145deg,#faf7f0,#eee4d3); }
+.replay-body { background-color:#f5f0e6; }
+.replay-body .menu-title { color:var(--replay-ink); }
+.replay-body .menu-sub,.replay-body .replay-muted { color:var(--replay-muted); }
+.replay-body .menu-btn { color:#fff; background:var(--replay-accent); border-color:#713d27; }
+.replay-body .menu-btn.secondary { color:var(--replay-ink); background:#fff; }
+.replay-body .replay-topbar { display:flex; justify-content:space-between; gap:24px; align-items:center; padding:28px clamp(18px,4vw,64px) 18px; }
+.replay-body .replay-browser { display:grid; grid-template-columns:minmax(250px,330px) minmax(0,1fr); gap:18px; padding:0 clamp(18px,4vw,64px) 36px; }
+.replay-body .replay-list-panel,.replay-body .replay-detail-panel { min-width:0; background:rgba(255,253,248,.96); border:1px solid var(--replay-line); border-radius:18px; box-shadow:0 12px 35px rgba(78,59,34,.11); padding:14px; }
+.replay-body .replay-search { box-sizing:border-box; width:100%; border:1px solid #bcae99; border-radius:11px; background:#fff; color:var(--replay-ink); padding:11px 12px; font:inherit; }
+.replay-body .replay-list { display:grid; gap:9px; margin-top:12px; max-height:calc(100vh - 210px); overflow:auto; }
+.replay-body .replay-list-item { display:grid; gap:5px; text-align:left; border:1px solid var(--replay-line); border-radius:12px; background:#fff; color:var(--replay-ink); padding:12px; cursor:pointer; }
+.replay-body .replay-list-item span { color:var(--replay-muted); font-size:13px; }
+.replay-body .replay-list-item b,.replay-body .replay-list-item span { overflow-wrap:anywhere; }
+.replay-body .replay-list-item.is-selected { border-color:var(--replay-accent); background:#f8dcc5; box-shadow:inset 4px 0 var(--replay-accent); }
+.replay-body .menu-empty { color:var(--replay-muted); padding:32px 18px; text-align:center; }
+.replay-body .replay-meta { padding:4px 6px 15px; border-bottom:1px solid var(--replay-line); }
+.replay-body .replay-meta h2 { color:var(--replay-ink); overflow-wrap:anywhere; }
+.replay-body .replay-meta-grid { display:flex; flex-wrap:wrap; gap:9px 18px; color:var(--replay-muted); }
+.replay-body .replay-view-controls { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.replay-body .replay-side-toggle,.replay-body .replay-human-toggle,.replay-body .replay-turn-step { padding:8px 12px; font-size:13px; }
+.replay-body .replay-turn-step[disabled] { opacity:.45; cursor:default; }
+.replay-body .replay-turn-jump-label { align-self:center; color:var(--replay-muted); font-size:13px; font-weight:700; }
+.replay-body .replay-turn-jump { border:1px solid #bcae99; border-radius:11px; background:#fff; color:var(--replay-ink); padding:8px 10px; font:inherit; font-size:13px; }
+.replay-body.is-human-actions-hidden .replay-side[data-side="Human"] { display:none; }
+.replay-body.is-ai-actions-hidden .replay-side[data-side="AI"] { display:none; }
+/* exp16 replay UI: one <details> per skipped block, never one page-wide
+   expand-all, so opening a board does not also open the shop beside it. */
+.replay-body .replay-fold { margin-top:10px; border:1px dashed var(--replay-line); border-radius:9px; background:#fffdf8; padding:6px 10px; }
+.replay-body .replay-fold>summary { cursor:pointer; color:var(--replay-muted); font-size:12px; font-weight:800; }
+.replay-body .replay-fold[open]>summary { margin-bottom:4px; }
+.replay-body .replay-full-link,.replay-body .replay-calc-link { display:inline-block; margin:12px 0 4px; color:#9a4929; font-weight:800; }
+.replay-body .replay-turns { display:grid; grid-template-columns:minmax(0,1fr); gap:22px; margin-top:18px; min-width:0; }
+.replay-body .replay-turn-card,.replay-body .replay-side { min-width:0; border:1px solid var(--replay-line); border-radius:16px; background:#fff; color:var(--replay-ink); box-shadow:0 8px 24px rgba(78,59,34,.08); padding:16px; }
+.replay-body .replay-side { margin-top:14px; background:var(--replay-paper); box-shadow:none; }
+.replay-body .replay-side[data-side="AI"] { background:#f6faf8; }
+.replay-body .replay-turn-card>header,.replay-body .replay-side>header,.replay-body .replay-event>header { display:flex; justify-content:space-between; gap:12px; align-items:baseline; }
+.replay-body .replay-turn-card h3,.replay-body .replay-side h4,.replay-body .replay-event h5,.replay-body .replay-board-block h6,.replay-body .replay-shop-block h6 { color:var(--replay-ink); margin:0; }
+.replay-body .replay-outcome,.replay-body .replay-item-chip { border-radius:999px; background:#f8dcc5; color:#713d27; padding:4px 10px; font-weight:800; }
+.replay-body .replay-turn-image { display:block; width:min(100%,900px); margin:14px auto; border:1px solid var(--replay-line); border-radius:10px; background:#fff; }
+.replay-body .replay-render-missing { margin:14px 0; border:1px dashed #b77962; border-radius:10px; padding:24px; color:#8c4931; background:#fff7f1; text-align:center; }
+.replay-body .replay-check,.replay-body .replay-legacy-badge { border-radius:999px; padding:3px 9px; background:#f1d8d2; color:#8b3c34; font-size:12px; font-weight:800; }
+.replay-body .replay-check.is-pass { background:#d9eee4; color:#2f7358; }
+.replay-body .replay-gold,.replay-body .replay-item-chips { display:flex; flex-wrap:wrap; gap:7px; margin:10px 0; }
+.replay-body .replay-gold span { border:1px solid var(--replay-line); border-radius:999px; background:#fff; padding:4px 9px; font-size:13px; }
+.replay-body .replay-sides,.replay-body .replay-board-block,.replay-body .replay-shop-block { min-width:0; }
+.replay-body .replay-board-block,.replay-body .replay-shop-block { margin-top:10px; }
+.replay-body .replay-board-block h6,.replay-body .replay-shop-block h6 { margin-bottom:6px; font-size:13px; }
+.replay-body .replay-board-row,.replay-body .replay-shop-row { display:grid; grid-auto-flow:column; grid-auto-columns:minmax(122px,1fr); gap:7px; overflow-x:auto; padding-bottom:4px; }
+.replay-body .replay-board-slot,.replay-body .replay-shop-slot { display:grid; gap:3px; min-height:64px; border:1px solid var(--replay-line); border-radius:9px; background:#fff; padding:8px; }
+.replay-body .replay-board-slot b,.replay-body .replay-shop-slot b { color:var(--replay-muted); font-size:11px; text-transform:uppercase; }
+.replay-body .replay-board-slot small,.replay-body .replay-shop-slot small { color:var(--replay-muted); }
+.replay-body .replay-board-slot.is-empty { color:#9aa3a6; background:#f2f2ef; }
+.replay-body .replay-shop-slot.is-frozen { border-color:#68a6be; background:#eaf6fb; box-shadow:inset 0 -3px #68a6be; }
+.replay-body .replay-chain { display:grid; grid-template-columns:minmax(0,1fr); gap:10px; margin-top:12px; min-width:0; }
+.replay-body .replay-event { min-width:0; border-left:4px solid var(--replay-accent); border-radius:9px; background:#fff; box-shadow:0 3px 12px rgba(78,59,34,.06); padding:10px 12px; }
+.replay-body .replay-event>header { justify-content:flex-start; align-items:center; }
+.replay-body .replay-event-index { display:inline-grid; place-items:center; width:22px; height:22px; border-radius:50%; color:#fff; background:var(--replay-accent); font-size:12px; font-weight:800; }
+.replay-body .replay-event h5 { text-transform:capitalize; }
+.replay-body .replay-event p { margin:8px 0; color:var(--replay-muted); }
+.replay-body .replay-tier-up { display:grid; gap:7px; margin:8px 0; border:1px solid #d7a94a; border-radius:8px; background:#fff4cf; padding:9px; }
+.replay-body .replay-tier-up-badge { margin-left:auto; border-radius:999px; background:#d78a1e; color:#fff; padding:3px 8px; font-size:11px; font-weight:900; text-transform:uppercase; }
+.replay-body .replay-board-pair { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; min-width:0; }
+.replay-body .replay-raw,.replay-body .replay-telemetry { margin-top:10px; color:var(--replay-muted); }
+.replay-body .replay-raw summary,.replay-body .replay-telemetry summary { cursor:pointer; font-weight:800; }
+.replay-body .replay-turn-card pre { max-height:420px; overflow:auto; border-radius:8px; background:#f3efe7; color:#334248; padding:10px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.replay-body .replay-unavailable { border-radius:9px; background:#fff4df; color:#795d2d; padding:10px; }
+.replay-body .replay-legacy-note { display:grid; gap:7px; padding:0 clamp(18px,4vw,64px) 34px; color:var(--replay-muted); }
+.replay-body .replay-legacy-note a { color:#9a4929; }
+.replay-body .replay-storage-note { max-width:900px; font-size:13px; }
+@media (max-width:900px) { .replay-body .replay-topbar { align-items:flex-start; flex-direction:column; } .replay-body .replay-browser { grid-template-columns:1fr; } .replay-body .replay-list { max-height:280px; } .replay-body .replay-board-pair { grid-template-columns:1fr; } }
+
+
+/* ============================== the bar ============================== */
+.duel-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: var(--parch);
+  border: var(--keyline) solid var(--outline);
+  border-radius: 9px;
+  padding: 8px 12px;
+  color: var(--dev-ink);
+}
+
+.duel-home {
+  font-weight: 700;
+  color: var(--wood-ink);
+  text-decoration: none;
+  padding: 4px 8px;
+  border: 2px solid var(--outline);
+  border-radius: 7px;
+  background: var(--parch-hi);
+}
+.duel-home:hover { background: var(--gold); }
+
+.duel-scores {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex: 1 1 auto;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--wood-ink);
+}
+.duel-score b { font-size: 22px; }
+.duel-score.you b { color: #1d6b12; }
+.duel-score.ai b { color: var(--hp); }
+.duel-turn {
+  padding: 2px 10px;
+  border: 2px solid var(--outline);
+  border-radius: 7px;
+  background: var(--gold);
+}
+
+.duel-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+}
+.duel-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dev-muted);
+  font-weight: 700;
+}
+.duel-field select,
+.duel-field input,
+.duel-btn {
+  font-family: var(--sap-font);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--dev-ink);
+  background: var(--parch-hi);
+  border: 2px solid var(--outline);
+  border-radius: 7px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.duel-field input { width: 76px; cursor: text; }
+.duel-field.checkbox { gap: 5px; color: var(--dev-ink); }
+.duel-btn { text-decoration: none; display: inline-block; }
+/* `display: inline-block` above outranks the user agent's `[hidden] {display:
+   none}`, so every `.duel-btn` carrying the `hidden` attribute showed anyway.
+   Found on 2026-08-20 on the settings card's "Keep playing this one", which
+   appeared with no game to keep, and it was already true of
+   `#duel-render-link`: the calculator link sat there pointing at `#` until a
+   battle had resolved. One rule fixes both, and any `.duel-btn` added later
+   with `hidden`. */
+.duel-btn[hidden] { display: none; }
+.duel-btn:hover { background: var(--gold); }
+.duel-btn.primary { background: var(--orange); color: #fff; }
+.duel-btn.primary:hover { background: var(--gold-deep); }
+
+/* ============================ the banner ============================ */
+.duel-banner {
+  background: var(--hp);
+  color: #fff;
+  border: var(--keyline) solid var(--outline);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-weight: 700;
+  font-size: 18px;
+}
+
+/* ========================= the opponent lane ========================= */
+.duel-opponent {
+  background: var(--parch);
+  border: var(--keyline) solid var(--outline);
+  border-radius: 9px;
+  padding: 10px 12px 12px;
+  color: var(--dev-ink);
+}
+.duel-opponent-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.duel-opponent-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--wood-ink);
+}
+.duel-searchline {
+  font-size: 15px;
+  color: var(--dev-muted);
+  font-weight: 700;
+}
+.duel-deepenline {
+  font-size: 15px;
+  color: var(--dev-muted);
+  font-weight: 700;
+}
+/* Loud on purpose: this one means nothing on the page is live. */
+.duel-stale {
+  background: var(--hp);
+  color: #fff;
+  border: var(--keyline) solid var(--outline);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-weight: 700;
+  font-size: 18px;
+}
+.duel-outcome {
+  margin-left: auto;
+  font-size: 18px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 7px;
+}
+.duel-outcome[data-outcome="win"] { background: #1d6b12; color: #fff; }
+.duel-outcome[data-outcome="loss"] { background: var(--hp); color: #fff; }
+.duel-outcome[data-outcome="draw"] { background: var(--stone); color: var(--dev-ink); }
+
+/* the badge: a dot that pulses only while the AI is actually thinking */
+.duel-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border: 2px solid var(--outline);
+  border-radius: 999px;
+  background: var(--parch-hi);
+  color: var(--dev-ink);
+}
+.duel-badge-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--stone-edge);
+  border: 2px solid var(--outline);
+}
+.duel-badge.is-thinking { background: var(--gold); }
+.duel-badge.is-thinking .duel-badge-dot {
+  background: var(--orange);
+  animation: duelPulse 0.9s ease-in-out infinite;
+}
+.duel-badge[data-status="failed"] { background: var(--hp); color: #fff; }
+.duel-badge[data-status="resolving"] { background: var(--ice); }
+@keyframes duelPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.45); }
+}
+
+.duel-opponent-body {
+  position: relative;
+  min-height: 168px;
+  display: flex;
+  align-items: flex-end;
+  /* The attack/health plates hang 28px BELOW the slab (`.badges` in app.css),
+     and the panel's own bottom padding is 12px, so a board drawn flush with
+     this box pokes its hearts out through the panel's keyline. Found on
+     W5.1's own screenshot; 22px + 12px clears it. */
+  padding-bottom: 22px;
+}
+.duel-board-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--slot-gap);
+}
+/* the opponent's cards are for looking at, not for dragging */
+.card.is-readonly { cursor: default; }
+
+/* ---- the enemy's own board (W5.1) ----
+   The sprite already faces the right way with no rule at all: the pack draws
+   pets facing left, and `spriteClass(..., 'enemy')` in `app.js` simply leaves
+   off the `mirror-x` the human's board wears. What does need a rule is the
+   level plaque, pinned to the card's left edge in `app.css`, which mirrors
+   with the pet to the top-right corner.
+
+   Two things are deliberately NOT mirrored:
+   - `.badges` (attack, then health) stays centred and in that order. The real
+     client draws attack left of health on BOTH sides -- exp15
+     `strips_final/strip_00`, REAL row, where the enemy worm reads 1 then 0
+     exactly like the player's pet does.
+   - `.equip-row`, the held-food chip, keeps the same shoulder. That frame has
+     no equipped pet in it, so there is nothing to copy; whether it swaps
+     shoulders is one of the two calls left to Ruihan on the screenshots. */
+.card.is-enemy .lvl-plaque {
+  left: auto;
+  right: 0;
+}
+
+.duel-curtain {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed var(--stone-edge);
+  border-radius: 9px;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(137, 129, 107, 0.16) 0 12px,
+    rgba(137, 129, 107, 0.05) 12px 24px
+  );
+  color: var(--dev-muted);
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+  padding: 0 12px;
+}
+/* W5.1: the curtain belongs to ONE state, `unseen`, and a game leaves it for
+   good at its first battle. `revealed` and `last-seen` show the same board;
+   what separates them is the label in the head and the result chip, which the
+   dwell timer stops highlighting. */
+.duel-opponent[data-phase="unseen"] .duel-board-row { visibility: hidden; }
+.duel-opponent:not([data-phase="unseen"]) .duel-curtain { display: none; }
+.duel-seen-note {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--dev-muted);
+}
+.duel-opponent[data-phase="last-seen"] .duel-outcome { opacity: 0.75; }
+
+/* ======================== live battle render ======================== */
+.duel-render-panel { color: var(--dev-ink); }
+.duel-render-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.duel-render-head h3 { margin: 0 0 3px; }
+.duel-render-stage {
+  min-height: 170px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+}
+.duel-render-stage img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 2px solid var(--outline);
+  border-radius: 8px;
+  background: var(--parch-hi);
+}
+.duel-render-panel[data-status="failed"] #duel-render-status {
+  color: var(--hp);
+  font-weight: 700;
+}
+.duel-render-panel[data-status="pending"] #duel-render-status {
+  color: var(--orange-ink);
+  font-weight: 700;
+}
+
+/* ========================== the turn record ========================== */
+.duel-log-hint {
+  font-size: 14px;
+  color: var(--dev-muted);
+  margin-bottom: 8px;
+}
+.duel-log { overflow-x: auto; }
+.duel-log-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 15px;
+}
+.duel-log-table th,
+.duel-log-table td {
+  border: 2px solid var(--outline);
+  padding: 3px 8px;
+  text-align: left;
+  background: var(--parch-hi);
+}
+.duel-log-table th { background: var(--gold); font-weight: 700; }
+.duel-log-table .verdict { font-weight: 700; }
+.duel-log-row[data-outcome="win"] .verdict { color: #1d6b12; }
+.duel-log-row[data-outcome="loss"] .verdict { color: var(--hp); }
+.duel-log-row[data-outcome="failed"] .verdict { color: var(--hp); }
+.duel-log-table .widths { color: var(--dev-muted); }
+
+/* exp16 Amendment 6: the per-turn search line on a replay turn card. Its own
+   light-theme rules because `.replay-body` is a separate palette from the
+   duel page and the PLAN pins its values. */
+.replay-body .replay-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 10px 0 4px;
+  padding: 9px 11px;
+  border: 1px solid var(--replay-line);
+  border-radius: 11px;
+  background: #fffdf8;
+  color: var(--replay-ink);
+  font-size: 14px;
+}
+.replay-body .replay-search-row b {
+  color: var(--replay-muted);
+  font-weight: 700;
+  margin-right: 5px;
+}
+
+/* =========================== the end screen =========================== */
+/* ======================= the settings card =======================
+   Same overlay shell as the end screen (Amendment 6), because they are the
+   two moments the page stops being a board and asks for a decision. */
+.duel-setup {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 18, 8, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 20px;
+  overflow-y: auto;
+}
+.duel-setup[hidden] { display: none; }
+.duel-setup-card {
+  background: var(--parch);
+  border: 4px solid var(--outline);
+  border-radius: 12px;
+  padding: 20px 24px;
+  max-width: 620px;
+  width: 100%;
+  color: var(--dev-ink);
+}
+.duel-setup-title {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--orange-ink);
+  text-align: center;
+}
+.duel-setup-sub {
+  text-align: center;
+  font-size: 15px;
+  color: var(--dev-muted);
+  margin: 4px 0 16px;
+}
+.duel-setup-field {
+  display: grid;
+  grid-template-columns: 170px 90px;
+  gap: 4px 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.duel-setup-label {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--wood-ink);
+}
+.duel-setup-field select,
+.duel-setup-field input {
+  font-family: var(--sap-font);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--dev-ink);
+  background: var(--parch-hi);
+  border: 2px solid var(--outline);
+  border-radius: 7px;
+  padding: 4px 8px;
+  width: 100%;
+}
+.duel-setup-help {
+  grid-column: 1 / -1;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--dev-muted);
+}
+.duel-setup-error {
+  border: 2px solid var(--hp);
+  background: var(--hp);
+  color: #fff;
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 12px;
+}
+.duel-setup-error[hidden] { display: none; }
+.duel-setup-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 6px;
+}
+.duel-field.readout {
+  cursor: default;
+  color: var(--dev-muted);
+}
+.duel-field.readout b { color: var(--dev-ink); }
+
+@media (max-width: 560px) {
+  .duel-setup-field { grid-template-columns: 1fr; }
+  .duel-setup-field input, .duel-setup-field select { width: 100%; }
+}
+
+.duel-end {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 18, 8, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 20px;
+}
+.duel-end[hidden] { display: none; }
+.duel-end-card {
+  background: var(--parch);
+  border: 4px solid var(--outline);
+  border-radius: 12px;
+  padding: 20px 24px;
+  max-width: 900px;
+  width: 100%;
+  color: var(--dev-ink);
+}
+.duel-end-title {
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--orange-ink);
+  text-align: center;
+}
+.duel-end-sub {
+  text-align: center;
+  font-size: 17px;
+  color: var(--dev-muted);
+  margin-top: 4px;
+}
+.duel-end-boards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+/* Five slabs are 476px wide at the scene's own scale, which is wider than
+   half this card. The boards are shown at 0.72 inside a box that owns their
+   height, so they cannot spill over the buttons underneath. */
+.duel-end-board { height: 170px; }
+.duel-end-board .duel-board-row {
+  transform: scale(0.72);
+  transform-origin: top left;
+  height: 160px;
+  padding-top: 12px;
+}
+.duel-end-board-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--wood-ink);
+  margin-bottom: 4px;
+}
+.duel-end-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+@media (max-width: 900px) {
+  .duel-end-boards { grid-template-columns: 1fr; }
+}
+
+/* ========================= the menu pages =========================
+   `/` (Play / Replays) and `/replays`. Same parchment-on-dark language as
+   everything else; no game scene, so no geometry from `app.css` is in play
+   here beyond the type face and the palette. */
+.menu {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 48px 16px;
+  display: grid;
+  gap: 18px;
+}
+.menu-card {
+  background: var(--parch);
+  border: 4px solid var(--outline);
+  border-radius: 12px;
+  padding: 24px 26px;
+  color: var(--dev-ink);
+}
+.menu-title {
+  font-size: 42px;
+  font-weight: 700;
+  color: var(--orange-ink);
+  margin: 0;
+}
+.menu-sub {
+  font-size: 17px;
+  color: var(--dev-muted);
+  margin: 6px 0 0;
+}
+.menu-actions {
+  display: flex;
+  gap: 14px;
+  margin-top: 22px;
+  flex-wrap: wrap;
+}
+.menu-btn {
+  font-family: var(--sap-font);
+  font-size: 26px;
+  font-weight: 700;
+  text-decoration: none;
+  color: var(--orange-ink);
+  background: var(--gold);
+  border: 4px solid var(--outline);
+  border-radius: 10px;
+  padding: 12px 28px;
+  display: inline-block;
+}
+.menu-btn:hover { background: var(--orange); color: #fff; }
+.menu-btn.secondary { background: var(--parch-hi); }
+.menu-btn.secondary:hover { background: var(--gold); color: var(--orange-ink); }
+.menu-note {
+  font-size: 15px;
+  color: var(--dev-muted);
+  line-height: 1.5;
+}
+.menu-note b { color: var(--dev-ink); }
+.menu-empty {
+  border: 2px dashed var(--stone-edge);
+  border-radius: 9px;
+  padding: 22px;
+  text-align: center;
+  color: var(--dev-muted);
+  font-size: 17px;
+  font-weight: 700;
+}
+.menu-note a {
+  color: var(--orange-ink);
+  text-decoration-color: var(--gold-deep);
+  font-weight: 700;
+}
+.menu-note a:hover { color: var(--orange); }
+
+/* ============ exp16 show-value: the agent's valuation of your board ========
+   The visual rule here is one rule: the sentence is never smaller than the
+   number is loud. `.duel-value-number` is the biggest type on the panel and
+   `.duel-value-meaning` sits directly under it at body size with no ellipsis
+   and no clamp -- a mid-turn or per-action figure means "if you take this and
+   then let BC finish the turn for you", and a layout that lets that line be
+   truncated or scrolled away is the same defect as not sending it. */
+.duel-value-panel { display: grid; gap: 10px; }
+.duel-value-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.duel-value-head h3 { margin: 0; }
+.duel-value-provenance {
+  color: var(--dev-muted);
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+.duel-value-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.duel-value-number {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--orange-ink);
+  font-variant-numeric: tabular-nums;
+}
+.duel-value-units { font-size: 17px; font-weight: 700; color: var(--dev-ink); }
+.duel-value-raw { color: var(--dev-muted); font-variant-numeric: tabular-nums; }
+.duel-value-meaning {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--dev-ink);
+  background: var(--parch-hi);
+  border-left: 5px solid var(--gold-deep);
+  border-radius: 0 8px 8px 0;
+  padding: 9px 12px;
+}
+.duel-value-meaning:empty { display: none; }
+.duel-value-flags { color: var(--dev-muted); line-height: 1.45; }
+.duel-value-flags:empty { display: none; }
+.duel-value-panel[data-state="unavailable"] .duel-value-number { color: var(--dev-muted); }
+.duel-value-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.duel-value-controls .tiny { color: var(--dev-muted); }
+.duel-value-list { display: grid; gap: 6px; }
+.duel-value-list:empty { display: none; }
+.duel-value-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 4px 12px;
+  align-items: baseline;
+  border: 2px solid var(--stone-edge);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: var(--parch);
+}
+.duel-value-row-number {
+  font-weight: 800;
+  font-size: 19px;
+  font-variant-numeric: tabular-nums;
+  color: var(--orange-ink);
+}
+.duel-value-row-action { font-weight: 700; word-break: break-word; }
+/* Spans both columns so the sentence is never squeezed by the action text. */
+.duel-value-row-meaning {
+  grid-column: 1 / -1;
+  color: var(--dev-muted);
+  line-height: 1.45;
+}
+.duel-value-logwrap { display: grid; gap: 6px; }
+.duel-value-log { display: grid; gap: 4px; }
+.duel-value-logrow {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  border-bottom: 1px dashed var(--stone-edge);
+  padding-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.duel-value-logturn { font-weight: 800; min-width: 34px; }
+.duel-value-logoutcome { font-weight: 700; color: var(--dev-muted); }
+@media (max-width: 720px) {
+  .duel-value-number { font-size: 32px; }
+  .duel-value-row { grid-template-columns: 58px minmax(0, 1fr); }
+}
+/* The full sentence once, above the per-action rows. Same treatment as the
+   headline's label, because it is the same statement. */
+.duel-value-list-note {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--dev-ink);
+  background: var(--parch-hi);
+  border-left: 5px solid var(--gold-deep);
+  border-radius: 0 8px 8px 0;
+  padding: 8px 11px;
+}
+.duel-value-logrow[data-clamped="1"] { border-bottom-style: solid; }
+.duel-value-clamp { color: var(--orange-ink); font-weight: 700; }
+
+/* exp16 show-value, replayed. One row per turn card carrying what V thought of
+   both boards at that end of turn, plus what was actually taken from there. The
+   short meaning line is not decoration: acceptance 2 of DESIGN_show_value.md
+   says a number does not reach the screen without the sentence that says what
+   it is, and thirteen copies of the full 270-character sentence down a page is
+   a way of not saying it, so the full text heads the game once and lives in
+   each row's title. */
+.replay-body .replay-value-legend { margin:12px 0; border:1px solid var(--replay-line); border-left:4px solid #6a8fb0; border-radius:12px; background:#f4f8fb; padding:11px 13px; display:grid; gap:6px; }
+.replay-body .replay-value-legend b { color:var(--replay-ink); }
+.replay-body .replay-value-legend p { margin:0; font-size:13px; line-height:1.55; color:#4a5b68; }
+.replay-body .replay-value-absent { margin:12px 0; border-radius:9px; background:#f3efe7; color:var(--replay-muted); padding:10px; font-size:13px; }
+.replay-body .replay-value { display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 14px; margin:12px 0; border:1px solid var(--replay-line); border-radius:12px; background:#f4f8fb; padding:9px 12px; }
+.replay-body .replay-value-side,.replay-body .replay-value-actual { border:1px solid #cfdce7; border-radius:999px; background:#fff; padding:4px 10px; font-size:13px; font-variant-numeric:tabular-nums; }
+.replay-body .replay-value-side[data-value-side="ai"] { background:#f6faf8; }
+.replay-body .replay-value-side b,.replay-body .replay-value-actual b { color:#4a5b68; font-weight:700; margin-right:5px; }
+.replay-body .replay-value-clamp { color:#8c6d2f; margin-right:2px; }
+.replay-body .replay-value-meaning { flex-basis:100%; color:var(--replay-muted); font-size:12px; }
+.replay-body .replay-value-error { flex-basis:100%; color:#8b3c34; font-size:12px; }

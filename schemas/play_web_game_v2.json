@@ -1,0 +1,472 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sap-arena.local/schemas/play_web_game_v2.json",
+  "title": "SAP-Arena play-web duel archive v2",
+  "type": "object",
+  "required": [
+    "schema_version", "id", "created_at", "updated_at", "git_sha",
+    "ai_version", "seeds", "rules", "turns", "done", "winner",
+    "end_reason", "final"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "id": {"type": "string", "pattern": "^(?!\\.{1,2}$)[A-Za-z0-9_.-]+$"},
+    "created_at": {"type": "string"},
+    "updated_at": {"type": "string"},
+    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "ai_version": {"$ref": "#/$defs/ai_version"},
+    "seeds": {
+      "type": "object",
+      "required": ["game", "human", "ai", "battle"],
+      "properties": {
+        "game": {"type": "integer"},
+        "human": {"type": "integer"},
+        "ai": {"type": "integer"},
+        "battle": {"type": "integer"}
+      },
+      "additionalProperties": false
+    },
+    "rules": {
+      "type": "object",
+      "required": ["name", "game_mode", "start_lives", "max_lives", "turn_cap"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "game_mode": {"type": "string", "minLength": 1},
+        "start_lives": {"type": "integer", "minimum": 1},
+        "max_lives": {"type": ["integer", "null"], "minimum": 1},
+        "turn_cap": {"type": "integer", "minimum": 1}
+      }
+    },
+    "gear_start": {"type": "object"},
+    "turns": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/turn"}
+    },
+    "final": {
+      "type": "object",
+      "required": ["human", "ai"],
+      "properties": {
+        "human": {"$ref": "#/$defs/final_side"},
+        "ai": {"$ref": "#/$defs/final_side"}
+      }
+    },
+    "done": {"type": "boolean"},
+    "winner": {"enum": ["human", "ai", null]},
+    "end_reason": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "string",
+          "pattern": "^(both_lives_0|human_lives_0|ai_lives_0|turn_cap|ai_failed|end_turn_failed:.+)$"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "ai_version": {
+            "properties": {
+              "inference_time_revision": {"const": "fixed-clock-v1"}
+            },
+            "required": ["inference_time_revision"]
+          }
+        },
+        "required": ["ai_version"]
+      },
+      "then": {
+        "properties": {
+          "turns": {
+            "items": {
+              "required": [
+                "deadline_segments", "end_wait_ms", "adaptive_chunks",
+                "turn_budget_s", "budget_utilization",
+                "deadline_overshoot_ms", "effective_unique_prefixes",
+                "dedup_ratio", "leaves_evaluated", "safety_cap_hit"
+              ],
+              "properties": {
+                "segments": {
+                  "items": {
+                    "required": [
+                      "width_requested", "unique_prefixes", "dedup_ratio",
+                      "leaves_evaluated", "chunk_sizes", "stage_seconds",
+                      "chunk_timings", "segment_budget_s",
+                      "deadline_overshoot_ms", "stop_reason"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "turn": {
+      "type": "object",
+      "required": [
+        "turn", "ok", "error", "ai_ok", "ai_error", "banner",
+        "n_segments", "searched_segments", "greedy_segments", "segments",
+        "elapsed_ms", "stop_latency_ms", "end_to_result_ms", "gear",
+        "finish_turn", "chunk_size", "search_used", "search_error",
+        "segments_capped", "ai_actions", "human", "ai"
+      ],
+      "properties": {
+        "turn": {"type": "integer", "minimum": 1},
+        "ok": {"type": "boolean"},
+        "error": {"type": ["string", "null"]},
+        "ai_ok": {"type": "boolean"},
+        "ai_error": {"type": ["string", "null"]},
+        "banner": {"type": ["string", "null"]},
+        "n_segments": {"type": "integer", "minimum": 0},
+        "searched_segments": {"type": "integer", "minimum": 0},
+        "deadline_segments": {"type": "integer", "minimum": 0},
+        "greedy_segments": {"type": "integer", "minimum": 0},
+        "segments": {"type": "array", "items": {"$ref": "#/$defs/segment"}},
+        "elapsed_ms": {"type": "integer", "minimum": 0},
+        "stop_latency_ms": {"type": "integer", "minimum": 0},
+        "end_wait_ms": {"type": "integer", "minimum": 0},
+        "end_to_result_ms": {"type": "integer", "minimum": 0},
+        "gear": {"type": "string", "minLength": 1},
+        "finish_turn": {"type": "boolean"},
+        "chunk_size": {"type": "integer", "minimum": 1},
+        "adaptive_chunks": {"type": "boolean"},
+        "turn_budget_s": {"type": "number", "exclusiveMinimum": 0},
+        "budget_utilization": {"type": ["number", "null"], "minimum": 0},
+        "deadline_overshoot_ms": {"type": "integer", "minimum": 0},
+        "effective_unique_prefixes": {"type": "integer", "minimum": 0},
+        "dedup_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "leaves_evaluated": {"type": "integer", "minimum": 0},
+        "safety_cap_hit": {"type": "boolean"},
+        "completion_decided": {"type": "integer", "minimum": 0},
+        "completion_divergent": {"type": "integer", "minimum": 0},
+        "search_used": {"type": "boolean"},
+        "search_error": {"type": ["string", "null"]},
+        "segments_capped": {"type": "boolean"},
+        "ai_actions": {"type": "array", "items": {"type": "string"}},
+        "human": {"$ref": "#/$defs/side"},
+        "ai": {"$ref": "#/$defs/side"},
+        "outcome": {"enum": ["win", "loss", "draw"]},
+        "ai_outcome": {"enum": ["win", "loss", "draw"]},
+        "life_bonus_applied": {"type": "boolean"},
+        "lives": {"type": "object"},
+        "wins": {"type": "object"},
+        "human_board": {"type": "array"},
+        "ai_board": {"type": "array"},
+        "battle": {"type": "object"},
+        "timing_ms": {"type": "object"},
+        "render_job": {"type": "object"},
+        "render": {"type": "object"}
+      },
+      "allOf": [{
+        "if": {"properties": {"ok": {"const": true}}, "required": ["ok"]},
+        "then": {
+          "required": [
+            "outcome", "ai_outcome", "life_bonus_applied", "lives", "wins",
+            "human_board", "ai_board", "battle", "timing_ms", "render_job"
+          ]
+        }
+      }]
+    },
+    "side": {
+      "type": "object",
+      "required": [
+        "state_before", "actions", "action_text", "diverged_at", "replay"
+      ],
+      "properties": {
+        "state_before": {"$ref": "#/$defs/archive_state"},
+        "actions": {"type": "array", "items": {"type": "object"}},
+        "action_text": {"type": "array", "items": {"type": "string"}},
+        "diverged_at": {"type": ["string", "null"]},
+        "board_pre_battle": {"type": "array"},
+        "replay": {"$ref": "#/$defs/replay"}
+      }
+    },
+    "replay": {
+      "type": "object",
+      "required": [
+        "version", "detail_available", "turn", "tier", "gold",
+        "board_in", "chain", "self_check", "board_pre_battle"
+      ],
+      "properties": {
+        "version": {"const": 2},
+        "detail_available": {"const": true},
+        "turn": {"type": "integer", "minimum": 1},
+        "tier": {"type": "integer", "minimum": 1, "maximum": 6},
+        "gold": {"$ref": "#/$defs/gold"},
+        "board_in": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {"$ref": "#/$defs/board_slot"}
+        },
+        "chain": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/event"}
+        },
+        "self_check": {"$ref": "#/$defs/self_check"},
+        "board_pre_battle": {"type": "array"}
+      }
+    },
+    "gold": {
+      "type": "object",
+      "required": [
+        "base", "gained", "spent", "left", "rolls", "reconciled",
+        "unattributed"
+      ],
+      "properties": {
+        "base": {"type": "integer"},
+        "gained": {"type": "integer", "minimum": 0},
+        "spent": {"type": "integer", "minimum": 0},
+        "left": {"type": "integer", "minimum": 0},
+        "rolls": {"type": "integer", "minimum": 0},
+        "reconciled": {"type": "boolean"},
+        "unattributed": {"type": "array"}
+      },
+      "additionalProperties": false
+    },
+    "board_slot": {
+      "type": "object",
+      "required": [
+        "slot", "empty", "name", "item_id", "level", "exp", "attack",
+        "health", "equipment_id", "status_effects", "uni", "identity",
+        "identity_src", "identity_source"
+      ],
+      "properties": {
+        "slot": {"type": "integer", "minimum": 0, "maximum": 4},
+        "empty": {"type": "boolean"},
+        "name": {"type": "string"},
+        "item_id": {"type": ["string", "null"]},
+        "level": {"type": "integer"},
+        "exp": {"type": "integer"},
+        "attack": {"type": "integer"},
+        "health": {"type": "integer"},
+        "equipment_id": {"type": ["string", "null"]},
+        "status_effects": {"type": "array"},
+        "uni": {"type": "null"},
+        "identity": {"$ref": "#/$defs/identity"},
+        "identity_src": {"const": "engine-native:item_id+link_id+location"},
+        "identity_source": {"const": "engine-native:item_id+link_id+location"}
+      }
+    },
+    "item": {
+      "type": "object",
+      "required": [
+        "shop_index", "slot_type", "name", "item_id", "cost", "attack",
+        "health", "frozen", "link_id", "provenance", "injected", "uni",
+        "identity", "identity_src", "identity_source"
+      ],
+      "properties": {
+        "shop_index": {"type": "integer"},
+        "slot_type": {"type": "string"},
+        "name": {"type": "string"},
+        "item_id": {"type": ["string", "null"]},
+        "cost": {"type": "integer"},
+        "attack": {"type": ["integer", "null"]},
+        "health": {"type": ["integer", "null"]},
+        "frozen": {"type": "boolean"},
+        "link_id": {"type": ["string", "null"]},
+        "provenance": {"type": "string", "minLength": 1},
+        "injected": {"type": "boolean"},
+        "uni": {"type": "null"},
+        "identity": {"$ref": "#/$defs/identity"},
+        "identity_src": {"const": "engine-native:item_id+link_id+location"},
+        "identity_source": {"const": "engine-native:item_id+link_id+location"}
+      },
+      "additionalProperties": false
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "uni", "canonical_item_id", "link_id", "location", "index",
+        "identity_source"
+      ],
+      "properties": {
+        "uni": {"type": "null"},
+        "canonical_item_id": {"type": ["string", "null"]},
+        "link_id": {"type": ["string", "null"]},
+        "location": {"enum": ["shop", "team"]},
+        "index": {"type": ["integer", "null"]},
+        "identity_source": {"const": "engine-native:item_id+link_id+location"}
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["op", "transition"],
+      "properties": {
+        "op": {
+          "enum": [
+            "start_turn", "roll", "freeze", "unfreeze", "buy_pet",
+            "buy_combine", "buy_food", "sell", "merge", "ability_stock",
+            "reorder", "end_turn"
+          ]
+        },
+        "transition": {"$ref": "#/$defs/transition"}
+        ,"tier_up_triggered": {"type": "boolean"}
+        ,"tier_up_link_id": {"type": ["string", "null"]}
+        ,"tier_up_choices": {"type": "array", "items": {"$ref": "#/$defs/item"}}
+        ,"tier_up_choices_available": {"type": "boolean"}
+        ,"tier_up_unavailable_reason": {"type": ["string", "null"]}
+      },
+      "allOf": [
+        {"if": {"properties": {"op": {"const": "start_turn"}}}, "then": {"required": ["source", "board", "gold", "shop", "shop_provenance"]}},
+        {"if": {"properties": {"op": {"const": "roll"}}}, "then": {"required": ["gold_before", "gold_after", "gold_delta", "shop", "shop_provenance"]}},
+        {"if": {"properties": {"op": {"enum": ["freeze", "unfreeze"]}}}, "then": {"required": ["items", "shop_index", "shop", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "buy_pet"}}}, "then": {"required": ["item", "from_shop_slot", "to_slot", "pet_after", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "buy_combine"}}}, "then": {"required": ["item", "from_shop_slot", "onto", "onto_after", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "buy_food"}}}, "then": {"required": ["item", "from_shop_slot", "target_mode", "target_indices", "targets", "target", "target_after", "free", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "sell"}}}, "then": {"required": ["pet", "from_slot", "level", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "merge"}}}, "then": {"required": ["src", "dst", "dst_after", "src_slot", "dst_slot", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "ability_stock"}}}, "then": {"required": ["source", "source_id", "name", "item_id", "count", "provenance", "injected", "identity_source"]}},
+        {"if": {"properties": {"op": {"const": "reorder"}}}, "then": {"required": ["order", "board_before", "board_after"]}},
+        {"if": {"properties": {"op": {"const": "end_turn"}}}, "then": {"required": ["frozen_carried", "frozen_items", "next_shop", "board_pre_battle", "battle_result"]}}
+      ]
+    },
+    "transition": {
+      "type": "object",
+      "required": [
+        "state_before", "action", "state_after", "deterministic",
+        "stochastic_reason", "legal", "engine_notes"
+      ],
+      "properties": {
+        "state_before": {"type": "object"},
+        "action": {"type": "object"},
+        "state_after": {"type": "object"},
+        "deterministic": {"type": "boolean"},
+        "stochastic_reason": {"type": ["string", "null"]},
+        "stochastic_structural": {"type": ["boolean", "null"]},
+        "legal": {"type": "boolean"},
+        "engine_notes": {
+          "type": ["array", "string"],
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "self_check": {
+      "type": "object",
+      "required": [
+        "bucket", "pass", "freeze_track_ok", "transition_continuity",
+        "action_legality", "board_slots_complete"
+      ],
+      "properties": {
+        "bucket": {"const": "engine_transition_v2"},
+        "pass": {"type": "boolean"},
+        "freeze_track_ok": {"type": "boolean"},
+        "transition_continuity": {"type": "boolean"},
+        "action_legality": {"type": "boolean"},
+        "board_slots_complete": {"type": "boolean"}
+      }
+    },
+    "ai_version": {
+      "type": "object",
+      "required": [
+        "agent", "bc_checkpoint", "vgame_heads", "vgame_extractor",
+        "search", "turn_mode", "stochastic_samples", "imagination_key",
+        "torch_threads", "skip_imagined_validation",
+        "honest_driver_commit", "git_sha"
+      ],
+      "properties": {
+        "agent_id": {"type": "string", "pattern": "^arm-c-r[0-9]+-a[0-9]+$"},
+        "agent_name": {"type": "string", "minLength": 1},
+        "model_revision": {"type": "string", "pattern": "^r[0-9]+$"},
+        "search_revision": {"type": "string", "pattern": "^a[0-9]+$"},
+        "baseline_id": {"type": "string", "minLength": 1}
+        ,"inference_time_revision": {"const": "fixed-clock-v1"}
+      }
+    },
+    "segment": {
+      "type": "object",
+      "required": [
+        "index", "mode", "width", "chunks", "ms", "boundary_reason",
+        "committed_types", "committed_stochastic_reasons", "search_used",
+        "search_error", "n_dedup"
+      ],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "mode": {"enum": ["searched", "greedy", "deadline-end-turn",
+                         "deadline-greedy"]},
+        "width": {"type": "integer", "minimum": 0},
+        "width_requested": {"type": "integer", "minimum": 0},
+        "chunks": {"type": "integer", "minimum": 0},
+        "ms": {"type": "integer", "minimum": 0},
+        "boundary_reason": {"type": ["string", "null"]},
+        "committed_types": {"type": "array"},
+        "committed_stochastic_reasons": {"type": "array"},
+        "committed_stochastic_structural": {
+          "type": "array",
+          "items": {"type": "boolean"}
+        },
+        "search_used": {"type": "boolean"},
+        "search_error": {"type": ["string", "null"]},
+        "n_dedup": {"type": ["integer", "null"], "minimum": 0},
+        "unique_prefixes": {"type": "integer", "minimum": 0},
+        "dedup_ratio": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "leaves_evaluated": {"type": "integer", "minimum": 0},
+        "chunk_sizes": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "stage_seconds": {"type": "object"},
+        "chunk_timings": {"type": "array", "items": {"type": "object"}},
+        "segment_budget_s": {"type": ["number", "null"], "minimum": 0},
+        "deadline_overshoot_ms": {"type": "integer", "minimum": 0},
+        "stop_reason": {"type": "string", "minLength": 1}
+        ,"width_capped": {"type": "boolean"}
+        ,"completion_policy": {"enum": ["bc_greedy", "v_search", null]}
+        ,"completion_width": {"type": ["integer", "null"], "minimum": 1}
+        ,"completion_aggregate": {"enum": ["max", "mean", null]}
+        ,"completion_decided": {"type": ["integer", "null"], "minimum": 0}
+        ,"completion_divergent": {"type": ["integer", "null"], "minimum": 0}
+        ,"realised_stochastic_samples": {"type": ["integer", "null"], "minimum": 0}
+        ,"extra_sample_levels": {"type": ["integer", "null"], "minimum": 0}
+        ,"extra_level_seconds_mean": {"type": ["number", "null"], "minimum": 0}
+        ,"completion_boards_mean": {"type": ["number", "null"], "minimum": 0}
+        ,"completion_dropped": {"type": ["integer", "null"], "minimum": 0}
+        ,"completion_second_chance_nodes": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "additionalProperties": false,
+      "allOf": [{
+        "if": {
+          "properties": {"completion_policy": {"const": "v_search"}},
+          "required": ["completion_policy"]
+        },
+        "then": {
+          "required": [
+            "completion_width", "completion_aggregate",
+            "completion_decided", "completion_divergent"
+          ],
+          "properties": {"completion_width": {"minimum": 2}}
+        }
+      }]
+    },
+    "archive_state": {
+      "type": "object",
+      "required": [
+        "pack", "turn", "gold", "lives", "trophies", "team", "shop", "meta"
+      ],
+      "properties": {
+        "pack": {"const": "Turtle"},
+        "turn": {"type": "integer"},
+        "gold": {"type": "integer"},
+        "lives": {"type": "integer"},
+        "trophies": {"type": "integer"},
+        "team": {"type": "array", "minItems": 5, "maxItems": 5},
+        "shop": {"type": "array"},
+        "meta": {"type": "object"}
+      }
+    },
+
+    "final_side": {
+      "type": "object",
+      "required": ["lives", "wins", "losses", "draws"],
+      "properties": {
+        "lives": {"type": "integer", "minimum": 0},
+        "wins": {"type": "integer", "minimum": 0},
+        "losses": {"type": "integer", "minimum": 0},
+        "draws": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

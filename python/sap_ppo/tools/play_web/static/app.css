@@ -1,0 +1,1353 @@
+    /* ------------------------------------------------------------------
+       exp14 SAP skin. The shop phase is one illustrated scene at the live
+       game's own geometry: a 1280x720 stage (16:9, the game's own canvas)
+       over the FieldBuild background, two lanes of pets standing on stone
+       slabs inside the yellow path bands, and the orange action slabs on the
+       dark footer band. Every number below is measured off the reference pack
+       (assets/Shop-Page-Layout.png, a 1279x717 capture of the real shop, plus
+       a live Playwright capture of the same screen), not invented.
+
+       Measured constants, all in the 1280x720 canvas:
+         slab            92 x 54 at 96px pitch, first centre x=254, fill
+                         #bab391, rim #89816b, rim bottom-heavy
+         team lane       slab centre y=300 (0.417 of height)
+         shop lane       slab centre y=492 (0.686 of height)
+         shop food       right-aligned to lane column 8, centre x=1022 (0.80)
+         dark band       top y~607 (0.843), i.e. 0.157 of height
+         HUD chip        plate 40 tall, radius 8 (20%), icon 50 (1.25x) riding
+                         across the plate's left edge, numeral 26 (65%)
+         tier die        34 x 34, radius 7, 3px black keyline inside a 3px
+                         white sticker rim, centre 29px left of the slab centre
+         button          177 x 70 (Roll) / 247 x 70, 4px keyline, radius 10,
+                         base strip 10px (14% of the height)
+       Keylines are pure #000000 everywhere: the game has no soft outline.
+
+       Anything that is tooling rather than game (legal actions, custom
+       action, history, debug add controls, message line) lives below the
+       scene in a collapsible dev drawer, styled as the game's own parchment
+       tooling.
+       ------------------------------------------------------------------ */
+    @font-face {
+      font-family: "SAPUI";
+      src: url("/api/font?name=sap-bold") format("opentype");
+      font-weight: 700;
+      font-display: swap;
+    }
+    @font-face {
+      font-family: "SAPUI";
+      src: url("/api/font?name=sap-regular") format("opentype");
+      font-weight: 400;
+      font-display: swap;
+    }
+
+    :root {
+      /* The game draws one keyline colour and it is pure black. */
+      --ink: #000000;
+      --outline: #000000;
+      --sap-font: "SAPUI", "Baloo 2", "Comic Sans MS", "Segoe UI", sans-serif;
+      --mono-font: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+      /* palette sampled from the reference captures */
+      --orange: #ff6a00;
+      --orange-band: #db5326;
+      --orange-ink: #651f00;
+      --gold: #ffca49;
+      --gold-deep: #e48300;
+      --path: #e9c136;
+      --grass: #4c9c08;
+      --footer: #1c3018;
+      --stone: #bab391;
+      --stone-edge: #89816b;
+      --wood: #f0a94e;
+      --wood-lo: #d98a2e;
+      --wood-post: #6b3a1a;
+      --wood-post-hi: #8a5228;
+      --wood-nail: #d8d2c4;
+      --wood-ink: #5c2f08;
+      --atk: #6e6e6e;
+      --atk-lo: #565656;
+      --hp: #e5332e;
+      --ice: #96def7;
+      --ice-lo: #2fb8e8;
+
+      /* scene geometry: the game's own 16:9 canvas */
+      --scene-w: 1280px;
+      --scene-h: 720px;
+      --stone-w: 92px;
+      --stone-h: 54px;
+      --slot-gap: 4px;
+      --lane-left: 209px;
+      --slot-h: 156px;
+      --keyline: 3px;
+
+      /* dev drawer: dark ground, parchment panels, game outlines */
+      --parch: #f4e3bf;
+      --parch-hi: #fff7e4;
+      --parch-edge: #b09266;
+      --console-bg: #241a10;
+      --console-ink: #f2e0ba;
+      --dev-ink: #2a1c0d;
+      --dev-muted: #6b543a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: var(--sap-font);
+      background: var(--footer);
+      color: var(--ink);
+    }
+
+    .wrap {
+      max-width: 1304px;
+      margin: 0 auto;
+      padding: 12px;
+      display: grid;
+      gap: 14px;
+    }
+
+    /* ============================ 7. scene ============================ */
+    /* The stage keeps the scene at the game's native 1280x720 and scales it
+       down as one unit on narrow windows, so every measured offset stays true. */
+    .stage {
+      position: relative;
+      width: 100%;
+      padding: 4px;
+      overflow: hidden;
+    }
+    .scene {
+      position: relative;
+      width: var(--scene-w);
+      height: var(--scene-h);
+      transform-origin: top left;
+      border: 0;
+      border-radius: 0;
+      overflow: hidden;
+      /* The background art is 2048x1680 and the live game does not fit it to the
+         canvas: it stretches it and crops the top. Fitting the art's own three
+         landmarks (its two path-band tops at 45.0% and 70.9% of the art, its
+         hedge top at 90.3%) to where the reference capture puts them in the
+         canvas (0.354, 0.624, 0.843 of 720) gives 776px tall at -96px, which
+         lands all three within 5px. The 44px the art then leaves at the bottom
+         is filled with the art's OWN hedge colour: round 3 filled it with the
+         page green instead, which is a different green from this pack's hedge
+         and drew a visible flat pad across the bottom of the scene. */
+      background-color: #152c11;
+      background-image: url("/api/background");
+      background-size: 100% 776px;
+      background-position: 0 -96px;
+      background-repeat: no-repeat;
+      /* hard 4px keyline drawn outside the box so it cannot shift the
+         background bands; not a soft floating-card shadow */
+      box-shadow: 0 0 0 4px var(--outline);
+      font-family: var(--sap-font);
+    }
+
+    /* ============================ 1. HUD ============================== */
+    /* Chip anatomy, re-measured on the reference at 1px in round 4. The whole
+       four-chip group is 311 x 33 starting at x=7, y=7 of the canvas, and each
+       chip is an icon 33px across riding on the left edge of a white rounded
+       plate that is only 27 tall and hugs its own numeral: the four assemblies
+       measure 67 / 67 / 61 / 88 wide with 7 / 13 / 8 between them, so the
+       plates are NOT one fixed width. Radius 6 on the 27px plate, keyline 3,
+       numeral 21 (cap height 16 on the reference) and italic. */
+    .hud {
+      position: absolute;
+      /* the group's left edge is the first icon at x=7; the flex box starts at
+         the first plate, 23px further right */
+      left: 27px;
+      top: 10px;
+      padding: 0;
+      z-index: 12;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stats {
+      display: flex;
+      align-items: center;
+      /* 32 between plates minus the 23px icon overhang = the reference's ~9px
+         of air; the hourglass draws narrow inside its own box, which is what
+         opens the reference's wider 13px gap before the third chip */
+      gap: 28px;
+    }
+    .stat-chip {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      height: 27px;
+      min-width: 45px;
+      padding: 0 4px 0 17px;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 6px;
+      background: #ffffff;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 21px;
+      line-height: 1;
+      color: #000000;
+      box-shadow: none;
+    }
+    .stat-chip .stat-val {
+      font-style: italic;
+      letter-spacing: 0.5px;
+      padding-bottom: 1px;
+    }
+    .stat-chip .stat-badge {
+      position: absolute;
+      left: -23px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 33px;
+      height: 33px;
+      display: block;
+      border: 0;
+      background: none;
+      overflow: visible;
+    }
+    .stat-icon {
+      width: 33px;
+      height: 33px;
+      display: block;
+      overflow: visible;
+    }
+    .hud-right {
+      position: absolute;
+      right: 12px;
+      top: 12px;
+      z-index: 12;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    /* game mode reads as a square icon tile, the way the game keeps its own
+       square top-right buttons */
+    /* sized off the HUD chips so the top row reads as one strip */
+    .mode-tile {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      background: var(--orange);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      overflow: hidden;
+    }
+    .mode-tile svg { width: 22px; height: 22px; display: block; }
+
+    /* ======================== 2/3/4. lanes =========================== */
+    /* Lanes are pinned by the slab's bottom edge. Re-measured at 1px in round
+       4 on the reference's own slab rims: team slabs bottom at y=327 (which
+       round 3 already had), shop slabs at y=522 (round 3 had 519). */
+    .lane {
+      position: absolute;
+      left: 0;
+      width: 100%;
+      height: 220px;
+      pointer-events: none;
+    }
+    #team-lane { top: 107px; }
+    #shop-lane { top: 302px; }
+    .lane-row {
+      position: absolute;
+      left: var(--lane-left);
+      bottom: 0;
+      display: flex;
+      align-items: flex-end;
+      gap: var(--slot-gap);
+      pointer-events: auto;
+    }
+    /* one empty pitch, used to right-align the food group to lane column 8 */
+    .shop-gap {
+      width: var(--stone-w);
+      height: 1px;
+      flex: 0 0 auto;
+      pointer-events: none;
+    }
+
+    /* ---- wooden signpost: the game's own lane marker ----
+       A plank with notched, split ends and a pointed right end, wood-grain
+       streaks, two nail dots, a darker shaded bottom edge and a few degrees of
+       tilt; the post runs through it and sticks out above, has a lighter left
+       edge, and drops a flat ground shadow. No blur anywhere. */
+    .signpost {
+      position: absolute;
+      width: 92px;
+      height: 68px;
+      pointer-events: none;
+      z-index: 2;
+    }
+    .signpost .post {
+      position: absolute;
+      left: 34px;
+      top: 0;
+      width: 14px;
+      height: 100%;
+      background: var(--wood-post);
+      border-left: 3px solid var(--wood-post-hi);
+      border-radius: 1px;
+    }
+    .signpost .shadow {
+      position: absolute;
+      left: 24px;
+      bottom: -5px;
+      width: 34px;
+      height: 11px;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.18);
+    }
+    .signpost .plank {
+      position: absolute;
+      left: 0;
+      top: 12px;
+      width: 90px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      padding: 0 14px 3px 6px;
+      background: var(--wood);
+      color: var(--wood-ink);
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 17px;
+      line-height: 1;
+      text-shadow: none;
+      transform: rotate(-4deg);
+      /* Hand-drawn silhouette: none of the four edges is straight, the left end
+         carries a notch step cut out of it, and the right end is an arrow point
+         with a notch where it meets the plank's body. */
+      clip-path: polygon(
+        2% 8%, 6% 0%, 34% 2%, 35% 8%, 60% 5%,
+        79% 2%, 80% 10%, 100% 47%, 80% 90%, 79% 97%,
+        60% 94%, 59% 100%, 33% 97%, 6% 100%, 2% 90%,
+        5% 62%, 0% 50%, 5% 38%
+      );
+      overflow: hidden;
+      z-index: 1;
+    }
+    /* flat wood-grain streaks and the darker shaded bottom edge */
+    .signpost .plank::before {
+      content: "";
+      position: absolute;
+      left: 4px;
+      right: 4px;
+      top: 9px;
+      height: 2px;
+      background: var(--wood-lo);
+      opacity: 0.55;
+      box-shadow: 0 9px 0 0 var(--wood-lo);
+    }
+    /* the shaded band the art paints across the plank's lower fifth */
+    .signpost .plank::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 7px;
+      background: var(--wood-lo);
+    }
+    /* the two light-grey nails that pin the plank to the post */
+    .signpost .nail {
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--wood-nail);
+      z-index: 2;
+    }
+    .signpost .nail-a { left: 42px; top: 16px; }
+    .signpost .nail-b { left: 42px; top: 39px; }
+    .signpost .label { position: relative; z-index: 2; }
+    /* Both signs are planted in their own lane's dirt band, not floating in
+       the hedge: the post base sits 47px (team) / 39px (shop) above the slab
+       line, which is inside the yellow band in the art. */
+    #team-lane .signpost { left: 690px; bottom: 47px; }
+    #shop-lane .signpost { left: 98px; bottom: 39px; }
+
+    /* ---- one slot: a slab with the unit standing on it ---- */
+    .card {
+      position: relative;
+      width: var(--stone-w);
+      height: var(--slot-h);
+      flex: 0 0 auto;
+      overflow: visible;
+      transition: transform 0.12s ease;
+    }
+    .card[draggable="true"] { cursor: grab; }
+
+    /* The slab is one shared inline SVG asset (SLAB_SVG), so every lane slot in
+       both lanes is literally the same hand-drawn blob: irregular outline,
+       bottom-heavy grey rim, a couple of interior chip nicks. */
+    .stone {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      width: var(--stone-w);
+      height: var(--stone-h);
+      display: block;
+      z-index: 1;
+      pointer-events: none;
+    }
+    .stone svg { display: block; width: 100%; height: 100%; overflow: visible; }
+    .sprite {
+      position: absolute;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      z-index: 2;
+      width: var(--stone-w);
+      height: var(--stone-w);
+      object-fit: contain;
+      object-position: bottom center;
+      /* the game outlines every sprite with a white sticker rim */
+      filter:
+        drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff)
+        drop-shadow(0 2px 0 #fff) drop-shadow(0 -2px 0 #fff);
+      pointer-events: none;
+    }
+    .mirror-x { transform: translateX(-50%) scaleX(-1); }
+    .fallback {
+      position: absolute;
+      left: 50%;
+      bottom: 30px;
+      transform: translateX(-50%);
+      z-index: 2;
+      width: 88px;
+      display: grid;
+      place-items: center;
+      font-family: var(--sap-font);
+      font-size: 11px;
+      font-weight: 700;
+      color: #40311c;
+      text-align: center;
+      word-break: break-all;
+      pointer-events: none;
+    }
+
+    /* ---- attack / health badges: sticker plates on the slab's front edge ----
+       Sized off the reference: its shop heart paints 28px of red, straddling
+       the slab's bottom edge at y 510-537 with the slab bottom at 522. That is
+       20% larger than round 3 drew it and hangs 10px lower. */
+    .badges {
+      position: absolute;
+      left: 50%;
+      bottom: -28px;
+      transform: translateX(-50%);
+      z-index: 5;
+      display: flex;
+      align-items: flex-end;
+      gap: 0;
+      pointer-events: none;
+    }
+    .badge {
+      width: 55px;
+      height: 48px;
+      display: block;
+      overflow: visible;
+    }
+
+    /* ---- tier die above a shop unit ----
+       34px square inside a 3px white sticker rim, keyline pure black, corner
+       radius 7 (~20%) with a hand-drawn wobble, sitting 29px left of the slab
+       centre exactly like the game's own slot badge. */
+    .die {
+      position: absolute;
+      left: calc(50% - 29px);
+      bottom: 98px;
+      transform: translateX(-50%);
+      z-index: 6;
+      width: 40px;
+      height: 40px;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* ---- level plaque above a team pet ----
+       An irregular hand-drawn black blob about 42x33, with the gold numeral
+       breaking above its top edge and the experience pills bulging out of its
+       bottom, drawn in a 48px box that gives those overhangs room. */
+    .lvl-plaque {
+      position: absolute;
+      left: 0;
+      bottom: 92px;
+      z-index: 6;
+      width: 48px;
+      height: 48px;
+      display: block;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* held food, as a small sticker badge on the unit's shoulder */
+    .equip-row {
+      position: absolute;
+      right: -2px;
+      bottom: 74px;
+      z-index: 6;
+      pointer-events: none;
+    }
+    .equip-chip {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: var(--keyline) solid var(--outline);
+      background: #ffffff;
+      overflow: hidden;
+    }
+    .equip-chip img { width: 22px; height: 22px; object-fit: contain; }
+    .equip-chip span { display: none; }
+
+    .ability-counter-row {
+      position: absolute;
+      left: 50%;
+      bottom: 146px;
+      transform: translateX(-50%);
+      z-index: 6;
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 3px;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .ability-counter-chip {
+      border: var(--keyline) solid var(--outline);
+      border-radius: 6px;
+      padding: 1px 5px 2px;
+      font-family: var(--sap-font);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.1;
+      background: var(--parch-hi);
+      color: var(--wood-ink);
+      white-space: nowrap;
+    }
+
+    /* selection / drag feedback: the unit lifts, the slab gets a hard ring */
+    .card.selected { transform: translateY(-4px); }
+    .card.selected .slab-body { stroke: #ffd24a; stroke-width: 5; }
+    .card.drop-hover { transform: translateY(-5px); }
+    .card.drop-hover .slab-body { stroke: #5abeff; stroke-width: 5; }
+    .card.pending-food-target .slab-body { stroke: #59e2ac; stroke-width: 5; }
+    /* COPY is tooling, so it wears the game's own small plaque: flat orange,
+       black keyline, dark brown caps. Not a bare hairline pill. */
+    .copy-badge {
+      position: absolute;
+      z-index: 7;
+      /* exp16 W5.1: at the unit's feet, centred, BELOW the attack/health
+         badges. It used to sit at 142px -- its own row above the tier die --
+         where Ruihan read it as crowding the top of the slot. The badge plates'
+         painted ink bottoms out ~15px below the slab line (see `.badges`), so
+         -50px clears them and still leaves ~67px to the action bar at y=643. */
+      bottom: -50px;
+      left: 50%;
+      transform: translateX(-50%);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 6px;
+      background: var(--orange);
+      color: var(--orange-ink);
+      font-family: var(--sap-font);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 3px 5px 4px;
+      pointer-events: none;
+    }
+
+    /* freeze affordance, folded onto the tier die (round 4).
+       The reference gives a shop slot exactly ONE white sticker, so the freeze
+       toggle no longer owns a second permanent chip beside the die: it is the
+       same 40px box drawn directly over the die, invisible until the pointer is
+       on it, and it paints the die's plate with ice and a snowflake while
+       hovered or while the slot is frozen. */
+    .freeze-toggle {
+      position: absolute;
+      left: calc(50% - 29px);
+      bottom: 98px;
+      transform: translateX(-50%);
+      z-index: 7;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      background: none;
+      border: 0;
+      cursor: pointer;
+      overflow: visible;
+    }
+    .freeze-toggle svg {
+      width: 40px;
+      height: 40px;
+      display: block;
+      overflow: visible;
+      opacity: 0;
+      transition: opacity 0.1s ease;
+    }
+    /* the mark itself: a white halo under a dark blue snowflake, so it reads on
+       the die's white plate and on the ice-blue one alike */
+    .freeze-toggle .flake { stroke: #0b3f57; fill: none; }
+    .freeze-toggle .flake-halo,
+    .freeze-toggle .flake-halo g { stroke: #ffffff; fill: none; stroke-width: 14; }
+    .shop-card:hover .freeze-toggle svg,
+    .freeze-toggle:focus-visible svg { opacity: 1; }
+    .card.is-frozen .freeze-toggle svg { opacity: 1; }
+    /* a frozen slot fills the die's own plate with ice; the pips stay black */
+    .card.is-frozen .die .die-plate { fill: var(--ice); }
+
+    /* Price, folded into the die's own row rather than stacking a fourth tier
+       of chrome under the slot: it appears flush with the slot's right edge
+       while the slot is hovered or selected, in the game's gold badge. */
+    .buy-chip {
+      position: absolute;
+      z-index: 8;
+      right: 0;
+      bottom: 98px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.1s ease;
+      height: 34px;
+      padding: 0 8px 2px 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      background: var(--gold);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 8px;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 21px;
+      line-height: 1;
+      color: #000000;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .buy-chip svg { width: 24px; height: 24px; display: block; }
+    .shop-card:hover .buy-chip,
+    .shop-card.selected .buy-chip {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* ================= 3.6 selection info card ======================= */
+    /* The game's own big white card: thick black border, the name in orange
+       caps, a gold tier circle, and the ability sentence for the pet's level.
+       It replaces reading a name out of a tooltip. */
+    /* Measured on the reference at 1px in round 4: the card is 330 x 128 at
+       x 825-1155 and y 208-336, which is 125px in from the scene's right edge,
+       with a 5px keyline and a radius of 10. It carries exactly three things -
+       thumb, name, tier coin, then the rule, then one ability line - and no
+       stat row, so the round-3 third row is gone. */
+    .info-card {
+      position: absolute;
+      right: 125px;
+      top: 208px;
+      width: 330px;
+      z-index: 14;
+      display: none;
+      padding: 13px 16px 17px;
+      background: #ffffff;
+      border: 5px solid var(--outline);
+      border-radius: 10px;
+      font-family: var(--sap-font);
+      color: #000000;
+    }
+    .info-card.show { display: block; }
+    .info-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .info-thumb {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      flex: 0 0 auto;
+    }
+    .info-name {
+      flex: 1 1 auto;
+      text-align: center;
+      font-size: 25px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--orange);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    /* the tier badge is a shaded coin, not a flat disc: darker outer rim, a
+       lighter inner face, the numeral in the game's deep gold */
+    .info-tier {
+      flex: 0 0 auto;
+      width: 33px;
+      height: 33px;
+      display: block;
+      overflow: visible;
+    }
+    .info-rule {
+      position: relative;
+      /* the reference insets the rule from both side margins */
+      margin: 10px 16px 9px;
+      height: 2px;
+      background: var(--outline);
+    }
+    .info-rule i {
+      position: absolute;
+      left: 50%;
+      top: -9px;
+      transform: translateX(-50%);
+      width: 20px;
+      height: 20px;
+      background: #ffffff;
+      border: 3px solid var(--outline);
+      border-radius: 5px;
+    }
+    .info-rule i::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 5px;
+      height: 5px;
+      margin: -2.5px 0 0 -2.5px;
+      border-radius: 50%;
+      background: var(--outline);
+    }
+    .info-text {
+      font-size: 17px;
+      font-weight: 700;
+      line-height: 1.25;
+      text-align: center;
+      padding: 0 6px;
+    }
+    /* the trigger arrow and the inline stat icons the reference draws inside
+       the ability sentence itself */
+    .info-text .ability-glyph {
+      display: inline-block;
+      vertical-align: -2px;
+      height: 15px;
+      width: auto;
+      margin: 0 2px;
+    }
+    .info-text .ability-glyph.arrow { height: 12px; }
+
+    /* ======================= 6. frozen slot ==========================
+       The pet stays fully coloured and untouched. The ice is a chunky flat
+       faceted block drawn IN FRONT of it, pure black keyline, hard white
+       highlight streaks, no blur, no glow, no grayscale, no hairline ring. */
+    .ice-block {
+      position: absolute;
+      left: 50%;
+      bottom: 10px;
+      transform: translateX(-50%);
+      z-index: 4;
+      width: 106px;
+      height: 120px;
+      pointer-events: none;
+      overflow: visible;
+    }
+
+    /* ==================== popup (combine) actions ==================== */
+    .popup-controls {
+      position: absolute;
+      z-index: 9;
+      left: 50%;
+      bottom: -62px;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 5px;
+      background: var(--parch-hi);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+    .mini-btn {
+      padding: 4px 8px;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 12px;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 6px;
+      background: var(--orange);
+      color: var(--orange-ink);
+      cursor: pointer;
+    }
+    .mini-btn:hover { filter: brightness(1.06); }
+
+    /* ==================== buff / level-up feedback =================== */
+    .fx-tags {
+      position: absolute;
+      z-index: 8;
+      left: 50%;
+      bottom: 60px;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      pointer-events: none;
+    }
+    .fx-tag {
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      background: var(--parch-hi);
+      font-family: var(--sap-font);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 2px 5px;
+      color: var(--wood-ink);
+    }
+    .fx-tag.stat { display: inline-flex; align-items: center; gap: 3px; }
+    .fx-tag.stat svg { width: 13px; height: 13px; display: block; }
+    .card.fx-buff .sprite { animation: buffPop 0.85s ease-out; }
+    .card.fx-levelup .sprite { animation: levelPop 1s ease-out; }
+    @keyframes buffPop {
+      0% { filter: drop-shadow(0 0 0 #fff); }
+      40% { filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.95)); }
+      100% {
+        filter:
+          drop-shadow(2px 0 0 #fff) drop-shadow(-2px 0 0 #fff)
+          drop-shadow(0 2px 0 #fff) drop-shadow(0 -2px 0 #fff);
+      }
+    }
+    @keyframes levelPop {
+      0% { transform: translateX(-50%) translateY(0) scale(1); }
+      35% { transform: translateX(-50%) translateY(-8px) scale(1.08); }
+      100% { transform: translateX(-50%) translateY(0) scale(1); }
+    }
+    .exp-corner { display: none; }
+
+    /* ======================== 5. action slabs ========================
+       Flat orange face, flat darker band along the bottom (10px of 70, the
+       measured 14%), hard 4px black keyline, no gradients and no shadows,
+       sitting on the dark footer band. Roll on the left, the contextual slab
+       and End turn grouped on the right, exactly like the reference. */
+    .action-bar {
+      position: absolute;
+      left: 7px;
+      right: 8px;
+      top: 643px;
+      height: 70px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      z-index: 10;
+    }
+    .action-right {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+    /* The label was set 20% small in round 3: the reference paints 27px of ink
+       for "Freeze" where round 3 painted 23, and it lets the icon run right up
+       to the keyline instead of leaving a 14px margin. */
+    .action-btn {
+      position: relative;
+      height: 70px;
+      min-width: 177px;
+      padding: 0 7px 0 11px;
+      background: var(--orange);
+      color: var(--orange-ink);
+      border: 4px solid var(--outline);
+      border-radius: 10px;
+      font-family: var(--sap-font);
+      font-size: 40px;
+      font-weight: 700;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      cursor: pointer;
+      overflow: hidden;
+      box-shadow: none;
+    }
+    .action-btn.wide { min-width: 247px; }
+    .action-btn::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 10px;
+      background: var(--orange-band);
+      pointer-events: none;
+    }
+    .action-btn > * { position: relative; z-index: 1; }
+    .action-btn .btn-label { padding-bottom: 8px; }
+    .action-btn:hover { filter: brightness(1.05); }
+    .action-btn:active { transform: translateY(2px); }
+    .action-btn:disabled { filter: grayscale(0.5) brightness(0.92); opacity: 0.75; cursor: not-allowed; }
+    /* The contextual slab is state driven: it is present whenever a unit is
+       selected. Visibility lives on this one class so no other rule can
+       silently hide it. */
+    .action-btn.contextual.is-idle { display: none; }
+    .action-btn.drop-hover { box-shadow: 0 0 0 4px #5abeff; }
+    .action-btn .btn-icon-svg { width: 44px; height: 40px; display: block; }
+    /* Roll's cost: the game's dark-brown die, a near-square with a hand-drawn
+       wobble (radius ~4 on 34, the measured 12%) and one orange pip. */
+    .cost-die {
+      position: relative;
+      width: 34px;
+      height: 33px;
+      flex: 0 0 auto;
+      display: block;
+      overflow: visible;
+    }
+    .cost-num {
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 15px;
+      color: #ffe6cf;
+    }
+
+    /* Recommend is tooling, so it rides in the scene's top-right cluster in
+       the same button language. */
+    .hud-btn {
+      height: 34px;
+      padding: 0 11px 4px;
+      display: inline-flex;
+      align-items: center;
+      background: var(--orange);
+      color: var(--orange-ink);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 17px;
+      line-height: 1;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+    .hud-btn::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 6px;
+      background: var(--orange-band);
+    }
+    .hud-btn > * { position: relative; z-index: 1; }
+    .hud-btn:hover { filter: brightness(1.05); }
+    .hud-btn:disabled { filter: grayscale(0.5); opacity: 0.75; cursor: not-allowed; }
+
+    /* In-scene feedback, rebuilt on the reference's own prompt plaque: a white
+       plaque with a 5px keyline sitting OVER the shop lane at the lane's left
+       edge, with an orange close tile attached to its right end rather than a
+       box floating at the top of the canvas. */
+    .toast {
+      position: absolute;
+      z-index: 20;
+      left: 220px;
+      top: 506px;
+      max-width: 700px;
+      display: flex;
+      align-items: stretch;
+      padding: 0;
+      border: 5px solid var(--outline);
+      border-radius: 10px;
+      background: #ffffff;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 22px;
+      line-height: 1.1;
+      color: #000000;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+      text-align: center;
+    }
+    .toast.show { opacity: 1; pointer-events: auto; }
+    .toast.err .toast-text { color: #8a1a10; }
+    .toast-text {
+      display: block;
+      padding: 3px 14px 6px;
+      font-style: italic;
+      align-self: center;
+    }
+    .toast-close {
+      flex: 0 0 auto;
+      width: 43px;
+      align-self: stretch;
+      margin: -1px -1px -1px 0;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      background: var(--orange);
+      border: 0;
+      border-left: 5px solid var(--outline);
+      border-radius: 0 5px 5px 0;
+      cursor: pointer;
+    }
+    .toast-close:hover { filter: brightness(1.06); }
+    .toast-close svg { width: 24px; height: 24px; display: block; }
+
+    /* ================== 8. dev drawer (below scene) ==================
+       Same visual language as the game: dark ground, parchment panels, one
+       keyline weight, SAPUI type, orange and brown accents. Everything that is
+       tooling collapses; the recommendation panel, the primary inspection
+       surface, stays open. */
+    .below {
+      display: grid;
+      gap: 10px;
+      font-family: var(--sap-font);
+    }
+    .panel,
+    .devzone {
+      background: var(--parch);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 9px;
+      padding: 12px;
+      color: var(--dev-ink);
+      font-family: var(--sap-font);
+      box-shadow: none;
+    }
+    .panel h3,
+    .devzone h4 {
+      margin: 0 0 8px;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 19px;
+      letter-spacing: 0.2px;
+      text-transform: none;
+      color: var(--wood-ink);
+    }
+    /* collapsible drawer section: the summary is a plaque, the marker is drawn
+       rather than left as the browser's default triangle */
+    details.drawer { padding: 0; }
+    details.drawer > summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 19px;
+      color: var(--wood-ink);
+      user-select: none;
+    }
+    details.drawer > summary::-webkit-details-marker { display: none; }
+    details.drawer > summary::before {
+      content: "";
+      width: 0;
+      height: 0;
+      border-left: 9px solid var(--wood-ink);
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      transition: transform 0.12s ease;
+    }
+    details.drawer[open] > summary::before { transform: rotate(90deg); }
+    details.drawer > .drawer-body { padding: 0 12px 12px; display: grid; gap: 9px; }
+    .devzone {
+      display: grid;
+      gap: 9px;
+      opacity: 1;
+    }
+    .devzone h4 { font-size: 17px; }
+    .devzone .row { align-items: center; }
+    .devzone button,
+    .devbox button,
+    .drawer-body button {
+      height: 32px;
+      padding: 0 11px 5px;
+      position: relative;
+      overflow: hidden;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      background: var(--orange);
+      color: var(--orange-ink);
+      font-family: var(--sap-font);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+    }
+    /* every drawer button carries the main slabs' base strip */
+    .devzone button::after,
+    .devbox button::after,
+    .drawer-body button::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 5px;
+      background: var(--orange-band);
+    }
+    .devzone button:hover,
+    .devbox button:hover { filter: brightness(1.06); }
+    .devzone button:disabled { filter: grayscale(0.5); opacity: 0.6; cursor: not-allowed; }
+    .devgrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 10px;
+    }
+    .devbox {
+      background: var(--parch-hi);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 8px;
+      padding: 9px;
+      display: grid;
+      gap: 6px;
+      align-content: start;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .debug-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+    .debug-controls label { display: grid; gap: 3px; }
+    .debug-controls label.tiny,
+    .devzone label.tiny { color: var(--wood-ink); font-weight: 700; font-size: 15px; }
+    /* text fields wear the game's own recessed plaque: black keyline, a chunky
+       inset shadow rather than a flat box, and a placeholder in the drawer's
+       own brown instead of the browser's grey */
+    .devzone input,
+    .debug-controls input,
+    textarea {
+      border: var(--keyline) solid var(--outline);
+      border-radius: 6px;
+      padding: 6px 9px;
+      background: var(--parch-hi);
+      color: var(--dev-ink);
+      min-width: 190px;
+      font-family: var(--sap-font);
+      font-size: 14px;
+      font-weight: 700;
+      box-shadow: inset 0 3px 0 rgba(92, 47, 8, 0.22);
+    }
+    .devzone input::placeholder,
+    .debug-controls input::placeholder,
+    textarea::placeholder {
+      color: var(--wood-ink);
+      opacity: 0.55;
+      font-style: italic;
+      font-weight: 700;
+    }
+    /* native selects wear the game's own plaque: cream fill, black keyline,
+       and a drawn arrow instead of the OS widget */
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 6px;
+      padding: 5px 30px 5px 8px;
+      background-color: var(--parch-hi);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 10'%3E%3Cpath d='M1 1.6h12L7 8.8z' fill='%235c2f08'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 9px center;
+      background-size: 13px 9px;
+      color: var(--dev-ink);
+      min-width: 190px;
+      font-family: var(--sap-font);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tiny {
+      font-size: 14px;
+      color: var(--dev-muted);
+      font-family: var(--sap-font);
+    }
+    strong.tiny { color: var(--wood-ink); font-size: 15px; }
+    /* helper text is not loose page copy: it sits on its own small parchment
+       label, like every other readable thing in the game */
+    .hint {
+      display: inline-block;
+      background: var(--parch-hi);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      padding: 5px 9px 6px;
+      font-family: var(--sap-font);
+      font-size: 14px;
+      font-weight: 700;
+      line-height: 1.25;
+      color: var(--wood-ink);
+    }
+    /* the durable message line reads as a plaque, like the in-scene toast */
+    .messages {
+      min-height: 22px;
+      font-family: var(--sap-font);
+      font-weight: 700;
+      font-size: 15px;
+      line-height: 1.2;
+      color: var(--wood-ink);
+    }
+    /* a plaque that hugs its own text, not a full-width bar across the drawer */
+    .messages:not(:empty) {
+      display: inline-block;
+      justify-self: start;
+      background: #ffffff;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      padding: 4px 10px 6px;
+    }
+    .messages.err { color: #8a1a10; }
+    /* One dark console panel for the machine-readable blocks, framed the way
+       the game frames a recessed surface: black keyline, a lighter brown inner
+       frame and a hard top shadow, so it reads as a panel set into the
+       parchment rather than a bare near-black box. */
+    .legal-actions,
+    .history,
+    .console-block {
+      max-height: 220px;
+      overflow: auto;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      padding: 9px;
+      background: var(--console-bg);
+      color: var(--console-ink);
+      font-family: var(--mono-font);
+      font-size: 12px;
+      line-height: 1.45;
+      box-shadow: inset 0 0 0 2px #4a3826, inset 0 3px 0 rgba(0, 0, 0, 0.4);
+    }
+    .devzone .action-item {
+      width: 100%;
+      text-align: left;
+      margin-bottom: 5px;
+      font-family: var(--mono-font);
+      font-size: 11px;
+      border: var(--keyline) solid #5c4a34;
+      border-radius: 5px;
+      background: #33261a;
+      padding: 4px 6px;
+      cursor: pointer;
+      color: var(--console-ink);
+      height: auto;
+      line-height: 1.3;
+      overflow: visible;
+    }
+    .devzone .action-item::after { content: none; }
+    .devzone .action-item:hover { border-color: var(--orange); background: #402f1f; }
+    textarea {
+      width: 100%;
+      min-height: 64px;
+      font-family: var(--mono-font);
+      font-size: 12px;
+      font-weight: 400;
+      background: var(--console-bg);
+      color: var(--console-ink);
+      /* the same recessed frame the read-only console panels wear */
+      box-shadow: inset 0 0 0 2px #4a3826, inset 0 3px 0 rgba(0, 0, 0, 0.4);
+      /* no OS resize grip poking out of the game's own panel */
+      resize: none;
+    }
+    /* scrollbars in the game's palette: dark thumb on the parchment track */
+    .legal-actions::-webkit-scrollbar,
+    .history::-webkit-scrollbar,
+    .console-block::-webkit-scrollbar,
+    textarea::-webkit-scrollbar {
+      width: 12px;
+      height: 12px;
+    }
+    .legal-actions::-webkit-scrollbar-track,
+    .history::-webkit-scrollbar-track,
+    .console-block::-webkit-scrollbar-track,
+    textarea::-webkit-scrollbar-track {
+      background: var(--parch);
+      border-left: var(--keyline) solid var(--outline);
+    }
+    .legal-actions::-webkit-scrollbar-thumb,
+    .history::-webkit-scrollbar-thumb,
+    .console-block::-webkit-scrollbar-thumb,
+    textarea::-webkit-scrollbar-thumb {
+      background: var(--wood-ink);
+      border: 2px solid var(--outline);
+      border-radius: 6px;
+    }
+    .legal-actions::-webkit-scrollbar-thumb:hover,
+    .history::-webkit-scrollbar-thumb:hover,
+    .console-block::-webkit-scrollbar-thumb:hover,
+    textarea::-webkit-scrollbar-thumb:hover { background: var(--orange-ink); }
+    .legal-actions,
+    .history,
+    .console-block,
+    textarea { scrollbar-color: var(--wood-ink) var(--parch); scrollbar-width: thin; }
+
+    /* Last Battle: the human line stays on parchment, the machine line (ids,
+       timings, parse modes) goes into the console block in a small mono face. */
+    .battle-summary {
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      padding: 9px;
+      background: var(--parch-hi);
+      color: var(--dev-ink);
+      font-family: var(--sap-font);
+      font-size: 15px;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .battle-summary strong { color: var(--wood-ink); }
+    .battle-headline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 17px;
+      color: var(--wood-ink);
+    }
+    .battle-summary .console-block { margin-top: 8px; max-height: 190px; }
+    .battle-summary .console-block div { white-space: pre-wrap; }
+    /* the calculator link is a plaque, not an underlined hyperlink */
+    .plaque-link {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      height: 32px;
+      padding: 0 11px 5px;
+      overflow: hidden;
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      background: var(--orange);
+      color: var(--orange-ink);
+      font-family: var(--sap-font);
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1;
+      text-decoration: none;
+    }
+    .plaque-link::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 5px;
+      background: var(--orange-band);
+    }
+    .plaque-link span { position: relative; z-index: 1; }
+    .plaque-link:hover { filter: brightness(1.06); }
+    .battle-replay-wrap {
+      margin-top: 8px;
+      display: flex;
+      justify-content: center;
+    }
+    /* the battle PNG is framed by the same keyline system as everything else */
+    .battle-replay-image {
+      display: block;
+      width: min(100%, 960px);
+      border: var(--keyline) solid var(--outline);
+      border-radius: 7px;
+      background: #fff;
+    }

@@ -1,0 +1,552 @@
+{
+  "foods": {
+    "by_tier": {
+      "1": [
+        "food-apple",
+        "food-honey"
+      ],
+      "2": [
+        "food-cupcake",
+        "food-meat-bone",
+        "food-sleeping-pill"
+      ],
+      "3": [
+        "food-birthday-cake",
+        "food-garlic",
+        "food-salad-bowl"
+      ],
+      "4": [
+        "food-canned-food",
+        "food-pear"
+      ],
+      "5": [
+        "food-chili",
+        "food-chocolate",
+        "food-sushi"
+      ],
+      "6": [
+        "food-melon",
+        "food-mushroom",
+        "food-pizza",
+        "food-steak"
+      ]
+    },
+    "id_to_name_id": {
+      "food-apple": "Apple",
+      "food-birthday-cake": "BirthdayCake",
+      "food-canned-food": "CannedFood",
+      "food-chili": "Chili",
+      "food-chocolate": "Chocolate",
+      "food-cupcake": "Muffin",
+      "food-garlic": "Garlic",
+      "food-honey": "Honey",
+      "food-meat-bone": "MeatBone",
+      "food-melon": "Melon",
+      "food-mushroom": "Mushroom",
+      "food-pear": "Pear",
+      "food-pizza": "Pizza",
+      "food-salad-bowl": "SaladBowl",
+      "food-sleeping-pill": "Pill",
+      "food-steak": "Steak",
+      "food-sushi": "Sushi"
+    },
+    "name_id_to_id": {
+      "Apple": "food-apple",
+      "BirthdayCake": "food-birthday-cake",
+      "CannedFood": "food-canned-food",
+      "Chili": "food-chili",
+      "Chocolate": "food-chocolate",
+      "Garlic": "food-garlic",
+      "Honey": "food-honey",
+      "MeatBone": "food-meat-bone",
+      "Melon": "food-melon",
+      "Muffin": "food-cupcake",
+      "Mushroom": "food-mushroom",
+      "Pear": "food-pear",
+      "Pill": "food-sleeping-pill",
+      "Pizza": "food-pizza",
+      "SaladBowl": "food-salad-bowl",
+      "Steak": "food-steak",
+      "Sushi": "food-sushi"
+    }
+  },
+  "id_rules": {
+    "canonical_preference": "sapai-main IDs when exact name match exists",
+    "food": "food-<kebab-case-name-id>",
+    "pet": "pet-<kebab-case-name-id>"
+  },
+  "naming_map": {
+    "unresolved_foods": [
+      {
+        "fallback_id": "food-birthday-cake",
+        "name": "Cake",
+        "name_id": "BirthdayCake",
+        "reason": "no_exact_sapai_name_match"
+      }
+    ],
+    "unresolved_pets": [
+      {
+        "fallback_id": "pet-pigeon",
+        "name": "Pigeon",
+        "name_id": "Pigeon",
+        "reason": "no_exact_sapai_name_match"
+      }
+    ]
+  },
+  "pack": "Turtle",
+  "pets": {
+    "base_stats": {
+      "pet-ant": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-armadillo": {
+        "attack": 4,
+        "health": 8
+      },
+      "pet-badger": {
+        "attack": 6,
+        "health": 3
+      },
+      "pet-beaver": {
+        "attack": 3,
+        "health": 2
+      },
+      "pet-bison": {
+        "attack": 4,
+        "health": 4
+      },
+      "pet-blowfish": {
+        "attack": 3,
+        "health": 6
+      },
+      "pet-boar": {
+        "attack": 10,
+        "health": 6
+      },
+      "pet-camel": {
+        "attack": 3,
+        "health": 3
+      },
+      "pet-cat": {
+        "attack": 4,
+        "health": 5
+      },
+      "pet-cow": {
+        "attack": 4,
+        "health": 6
+      },
+      "pet-crab": {
+        "attack": 4,
+        "health": 1
+      },
+      "pet-cricket": {
+        "attack": 1,
+        "health": 3
+      },
+      "pet-crocodile": {
+        "attack": 8,
+        "health": 4
+      },
+      "pet-deer": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-dodo": {
+        "attack": 4,
+        "health": 2
+      },
+      "pet-dog": {
+        "attack": 3,
+        "health": 2
+      },
+      "pet-dolphin": {
+        "attack": 4,
+        "health": 3
+      },
+      "pet-dragon": {
+        "attack": 3,
+        "health": 8
+      },
+      "pet-duck": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-elephant": {
+        "attack": 3,
+        "health": 7
+      },
+      "pet-fish": {
+        "attack": 2,
+        "health": 3
+      },
+      "pet-flamingo": {
+        "attack": 3,
+        "health": 2
+      },
+      "pet-fly": {
+        "attack": 4,
+        "health": 4
+      },
+      "pet-giraffe": {
+        "attack": 1,
+        "health": 2
+      },
+      "pet-gorilla": {
+        "attack": 7,
+        "health": 10
+      },
+      "pet-hedgehog": {
+        "attack": 4,
+        "health": 2
+      },
+      "pet-hippo": {
+        "attack": 4,
+        "health": 6
+      },
+      "pet-horse": {
+        "attack": 2,
+        "health": 1
+      },
+      "pet-kangaroo": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-leopard": {
+        "attack": 10,
+        "health": 4
+      },
+      "pet-mammoth": {
+        "attack": 4,
+        "health": 12
+      },
+      "pet-monkey": {
+        "attack": 1,
+        "health": 2
+      },
+      "pet-mosquito": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-otter": {
+        "attack": 1,
+        "health": 4
+      },
+      "pet-ox": {
+        "attack": 1,
+        "health": 3
+      },
+      "pet-parrot": {
+        "attack": 4,
+        "health": 2
+      },
+      "pet-peacock": {
+        "attack": 2,
+        "health": 5
+      },
+      "pet-penguin": {
+        "attack": 2,
+        "health": 3
+      },
+      "pet-pig": {
+        "attack": 4,
+        "health": 1
+      },
+      "pet-pigeon": {
+        "attack": 3,
+        "health": 1
+      },
+      "pet-rabbit": {
+        "attack": 1,
+        "health": 2
+      },
+      "pet-rat": {
+        "attack": 3,
+        "health": 6
+      },
+      "pet-rhino": {
+        "attack": 6,
+        "health": 7
+      },
+      "pet-rooster": {
+        "attack": 6,
+        "health": 5
+      },
+      "pet-scorpion": {
+        "attack": 1,
+        "health": 1
+      },
+      "pet-seal": {
+        "attack": 3,
+        "health": 8
+      },
+      "pet-shark": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-sheep": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-skunk": {
+        "attack": 3,
+        "health": 5
+      },
+      "pet-snail": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-snake": {
+        "attack": 8,
+        "health": 3
+      },
+      "pet-spider": {
+        "attack": 2,
+        "health": 2
+      },
+      "pet-squirrel": {
+        "attack": 3,
+        "health": 5
+      },
+      "pet-swan": {
+        "attack": 1,
+        "health": 2
+      },
+      "pet-tiger": {
+        "attack": 6,
+        "health": 4
+      },
+      "pet-turkey": {
+        "attack": 3,
+        "health": 4
+      },
+      "pet-turtle": {
+        "attack": 2,
+        "health": 5
+      },
+      "pet-whale": {
+        "attack": 3,
+        "health": 7
+      },
+      "pet-wolverine": {
+        "attack": 5,
+        "health": 7
+      },
+      "pet-worm": {
+        "attack": 1,
+        "health": 4
+      }
+    },
+    "by_tier": {
+      "1": [
+        "pet-ant",
+        "pet-beaver",
+        "pet-cricket",
+        "pet-duck",
+        "pet-fish",
+        "pet-horse",
+        "pet-mosquito",
+        "pet-otter",
+        "pet-pig",
+        "pet-pigeon"
+      ],
+      "2": [
+        "pet-crab",
+        "pet-flamingo",
+        "pet-hedgehog",
+        "pet-kangaroo",
+        "pet-peacock",
+        "pet-rat",
+        "pet-snail",
+        "pet-spider",
+        "pet-swan",
+        "pet-worm"
+      ],
+      "3": [
+        "pet-badger",
+        "pet-camel",
+        "pet-dodo",
+        "pet-dog",
+        "pet-dolphin",
+        "pet-elephant",
+        "pet-giraffe",
+        "pet-ox",
+        "pet-rabbit",
+        "pet-sheep"
+      ],
+      "4": [
+        "pet-bison",
+        "pet-blowfish",
+        "pet-deer",
+        "pet-hippo",
+        "pet-parrot",
+        "pet-penguin",
+        "pet-skunk",
+        "pet-squirrel",
+        "pet-turtle",
+        "pet-whale"
+      ],
+      "5": [
+        "pet-armadillo",
+        "pet-cow",
+        "pet-crocodile",
+        "pet-monkey",
+        "pet-rhino",
+        "pet-rooster",
+        "pet-scorpion",
+        "pet-seal",
+        "pet-shark",
+        "pet-turkey"
+      ],
+      "6": [
+        "pet-boar",
+        "pet-cat",
+        "pet-dragon",
+        "pet-fly",
+        "pet-gorilla",
+        "pet-leopard",
+        "pet-mammoth",
+        "pet-snake",
+        "pet-tiger",
+        "pet-wolverine"
+      ]
+    },
+    "id_to_name_id": {
+      "pet-ant": "Ant",
+      "pet-armadillo": "Armadillo",
+      "pet-badger": "Badger",
+      "pet-beaver": "Beaver",
+      "pet-bison": "Bison",
+      "pet-blowfish": "Blowfish",
+      "pet-boar": "Boar",
+      "pet-camel": "Camel",
+      "pet-cat": "Cat",
+      "pet-cow": "Cow",
+      "pet-crab": "Crab",
+      "pet-cricket": "Cricket",
+      "pet-crocodile": "Crocodile",
+      "pet-deer": "Deer",
+      "pet-dodo": "Dodo",
+      "pet-dog": "Dog",
+      "pet-dolphin": "Dolphin",
+      "pet-dragon": "Dragon",
+      "pet-duck": "Duck",
+      "pet-elephant": "Elephant",
+      "pet-fish": "Fish",
+      "pet-flamingo": "Flamingo",
+      "pet-fly": "Fly",
+      "pet-giraffe": "Giraffe",
+      "pet-gorilla": "Gorilla",
+      "pet-hedgehog": "Hedgehog",
+      "pet-hippo": "Hippo",
+      "pet-horse": "Horse",
+      "pet-kangaroo": "Kangaroo",
+      "pet-leopard": "Leopard",
+      "pet-mammoth": "Mammoth",
+      "pet-monkey": "Monkey",
+      "pet-mosquito": "Mosquito",
+      "pet-otter": "Otter",
+      "pet-ox": "Ox",
+      "pet-parrot": "Parrot",
+      "pet-peacock": "Peacock",
+      "pet-penguin": "Penguin",
+      "pet-pig": "Pig",
+      "pet-pigeon": "Pigeon",
+      "pet-rabbit": "Rabbit",
+      "pet-rat": "Rat",
+      "pet-rhino": "Rhino",
+      "pet-rooster": "Rooster",
+      "pet-scorpion": "Scorpion",
+      "pet-seal": "Seal",
+      "pet-shark": "Shark",
+      "pet-sheep": "Sheep",
+      "pet-skunk": "Skunk",
+      "pet-snail": "Snail",
+      "pet-snake": "Snake",
+      "pet-spider": "Spider",
+      "pet-squirrel": "Squirrel",
+      "pet-swan": "Swan",
+      "pet-tiger": "Tiger",
+      "pet-turkey": "Turkey",
+      "pet-turtle": "Turtle",
+      "pet-whale": "Whale",
+      "pet-wolverine": "Wolverine",
+      "pet-worm": "Worm"
+    },
+    "name_id_to_id": {
+      "Ant": "pet-ant",
+      "Armadillo": "pet-armadillo",
+      "Badger": "pet-badger",
+      "Beaver": "pet-beaver",
+      "Bison": "pet-bison",
+      "Blowfish": "pet-blowfish",
+      "Boar": "pet-boar",
+      "Camel": "pet-camel",
+      "Cat": "pet-cat",
+      "Cow": "pet-cow",
+      "Crab": "pet-crab",
+      "Cricket": "pet-cricket",
+      "Crocodile": "pet-crocodile",
+      "Deer": "pet-deer",
+      "Dodo": "pet-dodo",
+      "Dog": "pet-dog",
+      "Dolphin": "pet-dolphin",
+      "Dragon": "pet-dragon",
+      "Duck": "pet-duck",
+      "Elephant": "pet-elephant",
+      "Fish": "pet-fish",
+      "Flamingo": "pet-flamingo",
+      "Fly": "pet-fly",
+      "Giraffe": "pet-giraffe",
+      "Gorilla": "pet-gorilla",
+      "Hedgehog": "pet-hedgehog",
+      "Hippo": "pet-hippo",
+      "Horse": "pet-horse",
+      "Kangaroo": "pet-kangaroo",
+      "Leopard": "pet-leopard",
+      "Mammoth": "pet-mammoth",
+      "Monkey": "pet-monkey",
+      "Mosquito": "pet-mosquito",
+      "Otter": "pet-otter",
+      "Ox": "pet-ox",
+      "Parrot": "pet-parrot",
+      "Peacock": "pet-peacock",
+      "Penguin": "pet-penguin",
+      "Pig": "pet-pig",
+      "Pigeon": "pet-pigeon",
+      "Rabbit": "pet-rabbit",
+      "Rat": "pet-rat",
+      "Rhino": "pet-rhino",
+      "Rooster": "pet-rooster",
+      "Scorpion": "pet-scorpion",
+      "Seal": "pet-seal",
+      "Shark": "pet-shark",
+      "Sheep": "pet-sheep",
+      "Skunk": "pet-skunk",
+      "Snail": "pet-snail",
+      "Snake": "pet-snake",
+      "Spider": "pet-spider",
+      "Squirrel": "pet-squirrel",
+      "Swan": "pet-swan",
+      "Tiger": "pet-tiger",
+      "Turkey": "pet-turkey",
+      "Turtle": "pet-turtle",
+      "Whale": "pet-whale",
+      "Wolverine": "pet-wolverine",
+      "Worm": "pet-worm"
+    }
+  },
+  "sources": {
+    "sap_calculator": {
+      "foods": "SAP-Calculator/SAP-Calculator/src/assets/data/food.json",
+      "pets": "SAP-Calculator/SAP-Calculator/src/assets/data/pets.json"
+    },
+    "sapai_main": {
+      "data": "sapai-main/sapai/data.py",
+      "pack_mapping": {
+        "Pack1": "StandardPack"
+      }
+    }
+  },
+  "version": "v1"
+}

@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sap-arena"
+version = "0.1.0"
+description = "A Super Auto Pets agent, Arena evaluation environment, and local demos"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dependencies = [
+  "jsonschema>=4.18.0",
+  "numpy>=1.26.0",
+  "pillow>=10.0.0",
+]
+
+# Baselines need a learned policy; the environment and the rules engine do not.
+[project.optional-dependencies]
+agents = [
+  "torch>=2.2.0",
+  "gymnasium>=0.29.0",
+  "stable-baselines3>=2.3.0",
+  "sb3-contrib>=2.3.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+"sap_ppo.replay_decode" = ["*.json"]
+"sap_ppo.tools.play_web" = ["static/*", "static/**/*"]

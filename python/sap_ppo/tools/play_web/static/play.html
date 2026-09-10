@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAP-Arena Duel</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/duel.css" />
+  <script>
+    /* WHICH SESSION THE SKIN DRIVES. `app.js` renders the human's board and
+       shop and posts every action through `apiPath()`, which prefixes this
+       base. It has to be set BEFORE app.js runs, because app.js pulls state
+       the moment it loads -- without it, this page would silently drive
+       `/sandbox`'s session instead of the duel's, and the two look alike
+       enough on screen that only the turn counter gives it away. */
+    window.__SAP_API_BASE = '/api/duel';
+  </script>
+  <script src="/static/build_guard.js" defer></script>
+</head>
+<body class="duel-body">
+  <div class="wrap">
+
+    <!-- ===================== the duel bar ===================== -->
+    <div class="duel-bar">
+      <a class="duel-home" href="/" title="back to the menu">&#8592; Menu</a>
+      <div class="duel-scores">
+        <span class="duel-score you" id="duel-score-human">You <b id="duel-human-lives">-</b> lives &middot; <b id="duel-human-wins">0</b> wins</span>
+        <span class="duel-turn" id="duel-turn">Turn -</span>
+        <span class="duel-score ai" id="duel-score-ai">AI <b id="duel-ai-lives">-</b> lives &middot; <b id="duel-ai-wins">0</b> wins</span>
+      </div>
+      <div class="duel-controls">
+        <!-- Amendment 6: both knobs are set on the settings card before a game
+             and are fixed for its whole length, so this bar READS them and no
+             longer offers to change them. A game that could change its own
+             clock or deepening halfway could not be filed under one setting,
+             and the archive records exactly one per game. -->
+        <span class="duel-field readout" id="duel-gear-readout" title="fixed for this game, set before it started">
+          clock <b id="duel-clock-readout">-</b>s &middot; width <b id="duel-width-readout">-</b> &middot; deepening <b id="duel-deepen-readout">-</b>
+        </span>
+        <button id="duel-new-game" class="duel-btn" type="button">New game</button>
+      </div>
+    </div>
+
+    <!-- the loud failure line: `AI failed turn N: <code>` -->
+    <div class="duel-banner" id="duel-banner" hidden></div>
+
+    <!-- exp16: the page is pointed at a server that has RESTARTED. Its own
+         element, not the banner above, because the banner is per-turn and this
+         outlives every turn: nothing on this page is live any more. -->
+    <div class="duel-stale" id="duel-stale-server" hidden></div>
+
+    <!-- ===================== the opponent lane ===================== -->
+    <div class="duel-opponent" id="ai-lane" data-phase="unseen">
+      <div class="duel-opponent-head">
+        <span class="duel-opponent-title">Opponent</span>
+        <span class="duel-badge" id="ai-badge" data-status="idle">
+          <i class="duel-badge-dot"></i>
+          <span id="ai-badge-text">idle</span>
+        </span>
+        <span class="duel-searchline" id="ai-search-line">no turn played yet</span>
+        <!-- exp16: whether the AI is DEEPENING behind a chance node, and how
+             hard. A separate element rather than more words on the line above,
+             because `gate_duel.py` asserts that line character for character
+             against the server's own record. -->
+        <span class="duel-deepenline" id="ai-deepen-line">deepening: unknown</span>
+        <!-- which turn's board is standing here; `duel.js` owns the wording -->
+        <span class="duel-seen-note" id="ai-seen-note"></span>
+        <span class="duel-outcome" id="ai-outcome"></span>
+      </div>
+      <div class="duel-opponent-body">
+        <div class="duel-curtain" id="ai-curtain">
+          <span id="ai-curtain-text">You have not seen the AI&rsquo;s board yet. It appears when the first battle resolves, and stays.</span>
+        </div>
+        <div class="duel-board-row" id="ai-board"></div>
+      </div>
+    </div>
+
+    <!-- ===================== the shop scene (exp14 skin) =====================
+         Identical ids and classes to the sandbox page: `static/app.js` renders
+         the human's own board and shop here with no idea it is in a duel. -->
+    <div class="stage" id="stage">
+    <div class="scene" id="scene">
+      <div class="hud">
+        <div class="stats" id="stats"></div>
+      </div>
+      <div class="hud-right">
+        <span class="mode-tile" id="mode-tag" title="game mode"></span>
+      </div>
+
+      <div class="lane" id="team-lane">
+        <div id="team" class="lane-row team-row"></div>
+        <div class="signpost">
+          <i class="post"></i>
+          <i class="shadow"></i>
+          <span class="plank"><span class="label">Battle</span></span>
+          <i class="nail nail-a"></i><i class="nail nail-b"></i>
+        </div>
+      </div>
+
+      <div class="lane" id="shop-lane">
+        <div class="signpost">
+          <i class="post"></i>
+          <i class="shadow"></i>
+          <span class="plank"><span class="label">Shop</span></span>
+          <i class="nail nail-a"></i><i class="nail nail-b"></i>
+        </div>
+        <div id="shop" class="lane-row shop-row"></div>
+      </div>
+
+      <div id="info-card" class="info-card"></div>
+
+      <div class="action-bar">
+        <button id="btn-roll" class="action-btn" title="Roll the shop for 1 gold">
+          <span class="btn-label">Roll</span>
+          <span class="cost-die" id="roll-cost-die" aria-hidden="true"></span>
+        </button>
+        <div class="action-right">
+          <button id="btn-context-action" class="action-btn wide contextual is-idle" data-mode="">
+            <span class="btn-label" id="btn-context-label">Context</span>
+            <span id="btn-context-icon" aria-hidden="true"></span>
+          </button>
+          <button id="btn-end-turn" class="action-btn wide">
+            <span class="btn-label">End turn</span>
+            <span id="end-turn-icon" aria-hidden="true"></span>
+          </button>
+        </div>
+      </div>
+
+      <div id="toast" class="toast">
+        <span class="toast-text" id="toast-text"></span>
+        <button class="toast-close" id="toast-close" type="button" title="Dismiss"></button>
+      </div>
+    </div>
+    </div>
+
+    <!-- ============ what the agent thinks of the board you built ============
+         exp16 show-value. The number and the sentence under it are written
+         together by `duel.js::paintValue` from ONE server response, and the
+         number falls back to "--" when the sentence is missing. That is not
+         defensive coding for its own sake: a mid-turn or per-action number
+         means "if you take this and then let BC finish the turn for you, the
+         resulting board is worth this much", which is NOT the value of the
+         action, and a screen that shows the figure without saying so misleads.
+         DESIGN_show_value.md section 3 calls the label part of the feature. -->
+    <div class="panel duel-value-panel" id="duel-value-panel" hidden>
+      <div class="duel-value-head">
+        <h3>What the AI thinks of your board</h3>
+        <span class="tiny duel-value-provenance" id="duel-value-provenance"></span>
+      </div>
+      <div class="duel-value-headline">
+        <span class="duel-value-number" id="duel-value-number">--</span>
+        <span class="duel-value-units" id="duel-value-units"></span>
+        <span class="tiny duel-value-raw" id="duel-value-raw"></span>
+      </div>
+      <div class="duel-value-meaning" id="duel-value-meaning"></div>
+      <div class="tiny duel-value-flags" id="duel-value-flags"></div>
+
+      <div class="duel-value-controls">
+        <button id="duel-value-actions-btn" class="duel-btn" type="button">
+          Value each move
+        </button>
+        <span class="tiny" id="duel-value-actions-note"></span>
+      </div>
+      <div class="duel-value-list" id="duel-value-list"></div>
+
+      <div class="duel-value-logwrap">
+        <div class="duel-log-hint">
+          Predicted against realised, one row per resolved turn: your
+          end-of-turn board and the AI&rsquo;s, valued the same way, and once the
+          game ends the trophies each side actually went on to win from that
+          turn. A calibration log, not evidence about how good the valuation is.
+        </div>
+        <div id="duel-value-log" class="duel-value-log"></div>
+      </div>
+    </div>
+
+    <!-- ===================== the live battle render ===================== -->
+    <div class="panel duel-render-panel" id="duel-render-card" data-status="idle">
+      <div class="duel-render-head">
+        <div>
+          <h3>Last battle</h3>
+          <div class="tiny" id="duel-render-status">No battle has resolved yet.</div>
+        </div>
+        <a class="duel-btn" id="duel-render-link" href="#" target="_blank" rel="noopener" hidden>
+          Open in SAP Calculator
+        </a>
+      </div>
+      <div class="duel-render-stage">
+        <div class="menu-empty" id="duel-render-placeholder">The battle image will appear here after End turn.</div>
+        <img id="duel-render-image" alt="Rendered battles through the latest resolved turn" hidden />
+      </div>
+    </div>
+
+    <!-- ===================== the per-turn record ===================== -->
+    <div class="panel duel-log-panel">
+      <h3>How hard the AI thought</h3>
+      <div class="duel-log-hint">
+        A turn is a chain of SEGMENTS: the AI re-searches after every action the
+        engine calls structurally random. Each segment searches until its own
+        clock slice; a "d" width is the ranked minimum used only after the fixed
+        AI turn clock is exhausted.
+      </div>
+      <div id="duel-log" class="duel-log"><span class="tiny">No turn has resolved yet.</span></div>
+    </div>
+  </div>
+
+  <!-- ===================== the settings card =====================
+       Shown before every game: on arriving at /play with nothing in progress,
+       on New game, and on Play again. -->
+  <div class="duel-setup" id="duel-setup" hidden>
+    <div class="duel-setup-card">
+      <div class="duel-setup-title">Set up the game</div>
+      <p class="duel-setup-sub">Settings apply for the whole game. The replay records the configured and realised budgets.</p>
+
+      <label class="duel-setup-field">
+        <span class="duel-setup-label">Deepening width</span>
+        <input id="setup-deepen" type="number" min="0" max="64" step="1" value="4" />
+        <span class="duel-setup-help">
+          How many different ways the AI imagines finishing the turn behind each
+          point the game rolls dice, before its scorer picks one.
+          <b>0 turns it off</b>: it imagines one, the way it always used to.
+          Higher costs more work per chance sample. Under grow k this leaves
+          less time for extra samples and can increase deadline truncation;
+          fixed-all instead takes longer to finish its requested work.
+        </span>
+      </label>
+
+      <label class="duel-setup-field">
+        <span class="duel-setup-label">AI turn clock</span>
+        <input id="setup-budget" type="number" min="1" max="600" step="1" value="105" />
+        <span class="duel-setup-help">
+          Target wall-clock seconds for grow k or laboratory width growth.
+          Fixed-all ignores this clock. Checks occur between work units, so
+          it is not a hard timeout. The AI thinks while you shop.
+        </span>
+      </label>
+
+      <label class="duel-setup-field">
+        <span class="duel-setup-label">Search budget mode</span>
+        <select id="setup-gear">
+          <option value="resample-clock">grow k (default)</option>
+          <option value="measured">fixed-all</option>
+          <optgroup label="Advanced / laboratory">
+            <option value="full-clock">grow root width</option>
+          </optgroup>
+        </select>
+        <span class="duel-setup-help">
+          <b>Grow k</b> starts at the configured sample count (default 12),
+          keeping root proposals (default 72) and completion width (default 4)
+          fixed, then adds one chance sample to every stochastic group at once.
+          Only complete equal-k rounds are committed. Each sample takes the
+          maximum V over its completions; group scores average those maxima.
+          <b>Fixed-all</b> uses the same initial budget and stops after root
+          proposals, without a wall-clock stop.
+          Grow k checks time between work units: a turn deadline can truncate
+          root proposals, and an in-flight sample round can overrun the clock.
+          The turn log shows realised width and k; a timed duel is not the
+          arena benchmark. <b>Grow root width</b> is a laboratory alternative
+          whose proposal count depends on machine speed.
+        </span>
+      </label>
+
+      <label class="duel-setup-field" id="setup-width-row">
+        <span class="duel-setup-label">Segment width</span>
+        <input id="setup-width" type="number" min="1" max="4096" step="1" value="72" />
+        <span class="duel-setup-help">
+          How many whole action chains the AI considers per segment, and it
+          really plays one of them. Used by both fixed modes; ignored by
+          <b>grow root width</b>, which decides the count itself.
+          72 is what the published baselines ran.
+          <b>This is a different knob from deepening width above</b> and neither
+          switches the other off: this one is how many paths, that one is how
+          many endings imagined per path.
+        </span>
+      </label>
+
+      <div class="duel-setup-error" id="duel-setup-error" hidden></div>
+
+      <div class="duel-setup-actions">
+        <button class="duel-btn primary" id="duel-setup-start" type="button">Start game</button>
+        <button class="duel-btn" id="duel-setup-cancel" type="button" hidden>Keep playing this one</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== the end screen ===================== -->
+  <div class="duel-end" id="duel-end" hidden>
+    <div class="duel-end-card">
+      <div class="duel-end-title" id="duel-end-title">Game over</div>
+      <div class="duel-end-sub" id="duel-end-sub"></div>
+      <div class="duel-end-boards">
+        <div class="duel-end-board">
+          <div class="duel-end-board-title">Your final board</div>
+          <div class="duel-board-row" id="duel-end-human"></div>
+        </div>
+        <div class="duel-end-board">
+          <div class="duel-end-board-title" id="duel-end-ai-title">The AI's last board</div>
+          <div class="duel-board-row" id="duel-end-ai"></div>
+        </div>
+      </div>
+      <div class="duel-end-actions">
+        <button class="duel-btn primary" id="duel-end-again" type="button">Play again</button>
+        <a class="duel-btn" id="duel-end-replay" href="/replays">Replays</a>
+        <a class="duel-btn" href="/">Menu</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+  <!-- one wording for "how hard the AI thought", shared with /replays -->
+  <script src="/static/search_telemetry.js"></script>
+  <script src="/static/duel.js"></script>
+</body>
+</html>

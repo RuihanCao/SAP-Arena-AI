@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sap-arena.local/schemas/state_v1.json",
+  "title": "SAP Turtle State v1",
+  "type": "object",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "turn": { "const": 1 }
+        },
+        "required": ["turn"]
+      },
+      "then": {
+        "if": {
+          "properties": {
+            "meta": {
+              "properties": { "game_rules": { "const": "arena" } },
+              "required": ["game_rules"]
+            }
+          },
+          "required": ["meta"]
+        },
+        "then": {
+          "properties": {
+            "lives": { "const": 5 }
+          }
+        },
+        "else": {
+          "properties": {
+            "lives": { "const": 6 }
+          }
+        }
+      }
+    }
+  ],
+  "required": [
+    "pack",
+    "turn",
+    "gold",
+    "lives",
+    "trophies",
+    "team",
+    "shop",
+    "meta"
+  ],
+  "properties": {
+    "pack": {
+      "type": "string",
+      "const": "Turtle"
+    },
+    "turn": { "type": "integer", "minimum": 1, "maximum": 50 },
+    "gold": { "type": "integer", "minimum": 0, "maximum": 99 },
+    "lives": { "type": "integer", "minimum": 0, "maximum": 6 },
+    "trophies": { "type": "integer", "minimum": 0, "maximum": 10 },
+    "team": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "slot_index",
+          "pet_id",
+          "attack",
+          "health",
+          "level",
+          "exp",
+          "equipment_id",
+          "status_effects"
+        ],
+        "properties": {
+          "slot_index": { "type": "integer", "minimum": 0, "maximum": 4 },
+          "pet_id": { "type": ["string", "null"] },
+          "attack": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "health": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "perm_attack": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "perm_health": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "temp_attack": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "temp_health": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "sell_value": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "level": { "type": "integer", "minimum": 1, "maximum": 3 },
+          "exp": { "type": "integer", "minimum": 0, "maximum": 5 },
+          "equipment_id": { "type": ["string", "null"] },
+          "status_effects": {
+            "type": "array",
+            "items": { "type": "string" },
+            "maxItems": 8
+          }
+        }
+      }
+    },
+    "shop": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["shop_index", "slot_type", "item_id", "cost", "frozen"],
+        "properties": {
+          "shop_index": { "type": "integer", "minimum": 0, "maximum": 8 },
+          "slot_type": { "type": "string", "enum": ["pet", "food"] },
+          "item_id": { "type": "string" },
+          "attack": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "health": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "at": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "hp": { "type": "integer", "minimum": 0, "maximum": 50 },
+          "cost": { "type": "integer", "minimum": 0, "maximum": 3 },
+          "frozen": { "type": "boolean" },
+          "link_id": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["seed_known", "source", "version"],
+      "properties": {
+        "seed_known": { "type": "boolean" },
+        "source": { "type": "string" },
+        "version": { "type": "string", "const": "v1" },
+        "seed": { "type": ["integer", "null"] },
+        "oracle": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

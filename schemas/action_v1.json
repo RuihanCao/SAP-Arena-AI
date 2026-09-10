@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sap-arena.local/schemas/action_v1.json",
+  "title": "SAP Action v1",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "shop_index", "team_index"],
+      "properties": {
+        "type": { "const": "BUY_PET" },
+        "shop_index": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "team_index": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "shop_index", "team_index"],
+      "properties": {
+        "type": { "const": "BUY_COMBINE" },
+        "shop_index": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "team_index": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "shop_index", "team_index"],
+      "properties": {
+        "type": { "const": "BUY_FOOD" },
+        "shop_index": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "team_index": { "type": ["integer", "null"], "minimum": 0, "maximum": 4 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "team_index"],
+      "properties": {
+        "type": { "const": "SELL" },
+        "team_index": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "src_team_index", "dst_team_index"],
+      "properties": {
+        "type": { "const": "COMBINE" },
+        "src_team_index": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "dst_team_index": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "order"],
+      "properties": {
+        "type": { "const": "REORDER" },
+        "order": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": { "type": "integer", "minimum": 0, "maximum": 4 },
+          "uniqueItems": true
+        }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "shop_index"],
+      "properties": {
+        "type": { "const": "FREEZE" },
+        "shop_index": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "shop_index"],
+      "properties": {
+        "type": { "const": "UNFREEZE" },
+        "shop_index": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "ROLL" }
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "END_TURN" }
+      }
+    }
+  ]
+}

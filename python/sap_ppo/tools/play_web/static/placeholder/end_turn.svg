@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 56" width="160" height="56" role="img" aria-label="End turn">
+  <rect x="1" y="1" width="158" height="54" rx="12" fill="#3d6b4a" stroke="#8fd6a4" stroke-width="2"/>
+  <text x="80" y="35" font-family="system-ui,sans-serif" font-size="19" font-weight="600"
+        fill="#eafaf0" text-anchor="middle">END TURN</text>
+</svg>
