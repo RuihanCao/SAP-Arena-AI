@@ -1,37 +1,7 @@
-"""exp16 W3: the real agent behind the duel, built lazily.
+"""Load the BC proposer and compatible value model for the local demo.
 
-WHAT THIS BUILDS. The exp13 baseline, which is exp12's champion arm C:
-
-    BcRecommender(an internal dataset path)
-      -> the chain proposer (one whole-turn chain per candidate)
-    VGameLeafScorer.from_checkpoints([an internal dataset path],
-                                     <the same BC checkpoint as extractor>,
-                                     blend=0.0, pessimism=0.0)
-      -> the learned leaf that replaced the Monte-Carlo rollout
-    SearchRecommender(..., scoring="vgame", ksim=16, max_turn=30,
-                      turn_mode="segmented-honest", stochastic_samples=3)
-      -> best-of-N over the proposer, on exp13 Amendment A2's structural frame
-
-The V heads were trained with that BC checkpoint's feature extractor, so the
-extractor path is the BC checkpoint by default and `from_checkpoints` pins
-the sha of what it actually loaded; a mismatch raises there rather than
-scoring quietly wrong boards.
-
-WHY TORCH IS IMPORTED INSIDE THE FUNCTION. play-web must start, serve
-`/sandbox` and answer `/api/state` on a box with no checkpoints and no
-torch: exp14's browser gate runs against that surface, and the sandbox is
-Ruihan's manual inspection page. So this module imports nothing heavier than
-the standard library at module scope, and every torch/sb3 import lives
-inside `build_agent`. `python/tests/test_exp16_agent.py` constructs the app
-with no agent and hits `/api/state` to keep that true.
-
-WHY ONE TORCH THREAD. W0 measured width-72 decisions at 4.70 / 4.73 / 4.78 /
-4.74 s on 1 / 4 / 8 / 16 threads -- 1.5% across the whole range, because the
-cost is hundreds of small BC forwards, not one big matmul. One thread is
-therefore free, and it is the only setting under which two decodes of the
-same state agree bit for bit, which W3's "same seeds reproduce the game" and
-W6's replay archive both depend on.
-"""
+Model imports and checkpoint loads are deferred until needed. The value model
+checks the BC feature-extractor hash before scoring states."""
 
 from __future__ import annotations
 
@@ -43,9 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# exp13's honest-frame mode enum and k. Imported at module scope deliberately:
-# `honest_frame` is pure stdlib, so it costs nothing and it means the
-# defaults below cannot drift from exp13's own constants.
+
 from ..honest_frame import (
     DEFAULT_STOCHASTIC_SAMPLES,
     TURN_MODE_SEGMENTED_HONEST,
@@ -58,9 +26,7 @@ from .agent_identity import (
     MODEL_REVISION_R0,
 )
 
-# The exp13 baseline == exp12 champion arm C. Paths are relative to the repo
-# root (where `data` is the symlink to the data disk), matching every other
-# tool in the tree.
+
 from ..._artifact_defaults import (  # noqa: E402
     DUEL_VGAME_HEADS,
     PLAY_WEB_BC_CHECKPOINT as DEFAULT_BC_CHECKPOINT,
@@ -74,12 +40,7 @@ DEFAULT_TORCH_THREADS = 1
 
 @dataclass(frozen=True)
 class AgentConfig:
-    """Every knob that changes what the agent PLAYS, in one place.
-
-    Anything here that differs between two games makes them two different
-    agents, which is why `AgentHandle.describe()` echoes the whole thing
-    into the archive (W6) rather than a hand-picked subset.
-    """
+    """Every knob that changes what the agent PLAYS, in one place."""
 
     agent_id: str = CURRENT_AGENT_ID
     agent_name: str = CURRENT_AGENT_NAME
@@ -98,32 +59,20 @@ class AgentConfig:
     seed: int = 0
     turn_mode: str = TURN_MODE_SEGMENTED_HONEST
     stochastic_samples: int = DEFAULT_STOCHASTIC_SAMPLES
-    # exp16 A3. What fills the rest of the turn behind a chance node while the
-    # search is still ranking. `bc_greedy` + width 1 is every run before
-    # 2026-08-19 and is the default HERE ON PURPOSE, so every caller that does
-    # not ask for deepening keeps a byte-identical agent; the deployed :8766
-    # command line is what turns it on. `search_recommender` owns the
-    # validation (the two fields are coupled: v_search needs width >= 2,
-    # bc_greedy requires width == 1) and refuses a bad pair loudly.
+
+
     completion_policy: str = "bc_greedy"
     completion_width: int = 1
-    # exp16 W0. What a SAMPLED completion does when its walk would give up
-    # before the turn is over. Default is the behaviour every run before
-    # 2026-08-20 had; `search_recommender` owns the definitions and the
-    # measurement that motivates changing it.
-    #: W0, 2026-08-21. `resample` rather than `stop`: see
-    #: `search_recommender.COMPLETION_TAIL_STOP` for the ruling and the three
-    #: readings. `stop` reproduces every result measured before that date.
+
+
     completion_tail: str = "resample"
     torch_threads: int = DEFAULT_TORCH_THREADS
-    # exp13 W0b': skip schema validation on IMAGINED walks only (BC decode,
-    # candidate replay, prefix walks, resample completions). Measured 2.7x
-    # there; the committed ops this line plays go through `api.step` and
-    # cannot inherit it. Off by default, on for interactive play.
+
+
     skip_imagined_validation: bool = False
 
     def __post_init__(self) -> None:
-        expected_id = f"arm-c-{self.model_revision}-{self.search_revision}"
+        expected_id = f"bc-value-{self.model_revision}-{self.search_revision}"
         if self.agent_id != expected_id or not self.agent_name or not self.baseline_id:
             raise ValueError("agent_identity_inconsistent")
         if self.agent_id == CURRENT_AGENT_ID:
@@ -149,15 +98,15 @@ class AgentConfig:
 
 
 def demo_agent_config(**overrides: Any) -> AgentConfig:
-    """Interactive defaults; AgentConfig keeps the historical research defaults.
+    """Interactive defaults with configurable model paths.
 
     Model paths can be overridden by the operator. The archive records their
     actual hashes; the generic identity below does not assert a checkpoint hash.
     Matching these budgets alone does not make a timed duel an arena benchmark.
     """
     values: dict[str, Any] = {
-        "agent_id": "arm-c-configured-interactive",
-        "agent_name": "BC + V (checkpoint hashes in archive)",
+        "agent_id": "bc-value-configured-interactive",
+        "agent_name": "SAP-Arena-AI",
         "model_revision": "configured",
         "search_revision": "interactive",
         "baseline_id": "interactive-configured-budget",
@@ -202,12 +151,8 @@ def _git_sha(repo_root: Path) -> str | None:
 
 
 def _honest_driver_commit(repo_root: Path) -> str | None:
-    """The commit that introduced exp13's honest frame, as the archive's
-    provenance for WHICH segmented driver played the game.
-
-    Read from git rather than hard-coded, so a rebase cannot leave the
-    archive pointing at a commit that is not in this history.
-    """
+    """Read from git rather than hard-coded, so a rebase cannot leave the
+    archive pointing at a commit that is not in this history."""
     try:
         out = subprocess.run(
             ["git", "log", "-1", "--format=%H", "--", "python/sap_ppo/tools/honest_frame.py"],
@@ -236,34 +181,23 @@ class AgentHandle:
     _digest_key: tuple[Any, ...] | None = None
 
     def describe(self) -> dict[str, Any]:
-        """The `ai_version` block exp16 W6 archives with every game.
-
-        Only the EXPENSIVE half is cached (three checkpoint digests plus two
+        """Only the EXPENSIVE half is cached (three checkpoint digests plus two
         git lookups), keyed on the paths it was computed from; everything
-        derived from `config` is rebuilt on every call.
-
-        The split is not an optimisation, it is what keeps the block honest
-        after `DuelApp` installs a new config per game (Amendment 6). Caching
-        the whole block, which is what this did until 2026-08-20, would keep
-        serving the completion policy the FIRST game of the process ran under.
-        That block is exactly what the archive records, so every later game
-        would carry a wrong number, and nothing else on the page contradicts
-        it -- the deepening line reads the live config, not the archive.
-        """
+        derived from `config` is rebuilt on every call."""
         cfg = self.config
         digest_key = (cfg.bc_checkpoint, tuple(cfg.vgame_heads), cfg.extractor_path)
         if self._digest_key != digest_key:
             self._digests = {
                 "bc_checkpoint": {
-                    "path": cfg.bc_checkpoint,
+                    "path": Path(cfg.bc_checkpoint).name,
                     "sha256": _sha256(self.repo_root / cfg.bc_checkpoint),
                 },
                 "vgame_heads": [
-                    {"path": p, "sha256": _sha256(self.repo_root / p)}
+                    {"path": Path(p).name, "sha256": _sha256(self.repo_root / p)}
                     for p in cfg.vgame_heads
                 ],
                 "vgame_extractor": {
-                    "path": cfg.extractor_path,
+                    "path": Path(cfg.extractor_path).name,
                     "sha256": _sha256(self.repo_root / cfg.extractor_path),
                 },
                 "honest_driver_commit": _honest_driver_commit(self.repo_root),
@@ -292,8 +226,7 @@ class AgentHandle:
             "completion_policy": str(cfg.completion_policy),
             "completion_width": int(cfg.completion_width),
             "completion_tail": str(cfg.completion_tail),
-            # A1 ruling 1's key shape, spelled out so an archive says
-            # what stream imagination ran on without reading the code.
+            # Record the independent simulation stream's key structure.
             "imagination_key": "sha256(engine_seed, turn, segment_index, sample_r)",
             "torch_threads": int(cfg.torch_threads),
             "skip_imagined_validation": bool(cfg.skip_imagined_validation),
@@ -318,8 +251,7 @@ def build_agent(cfg: AgentConfig | None = None, *, repo_root: Path | None = None
 
     import torch
 
-    # W0: 1/4/8/16 threads are within 1.5% of each other and 1 is the only
-    # bit-reproducible one. See the module docstring.
+
     torch.set_num_threads(int(cfg.torch_threads))
 
     from ..bc_recommender import BcRecommender
@@ -362,10 +294,8 @@ def build_search(bc: Any, scorer: Any, cfg: AgentConfig) -> Any:
     constructor, so this is also the only place a caller needs to go through
     to have a candidate setting checked.
     """
-    # Imported here, not at module scope, for the same reason `build_agent`
-    # keeps its heavy imports inside: importing this module must not pull in
-    # torch, or `/sandbox` and `/api/state` stop working on a box with no
-    # checkpoints (exp16 PLAN risk 7).
+
+
     from ..search_recommender import SearchRecommender
 
     return SearchRecommender(
@@ -387,31 +317,11 @@ def build_search(bc: Any, scorer: Any, cfg: AgentConfig) -> Any:
 def build_readonly_models(
     cfg: AgentConfig, *, repo_root: Path | None = None
 ) -> tuple[Any, Any]:
-    """A SECOND, independent (BC, V) pair from the same pinned checkpoints.
+    """Load a separate BC/value pair for read-only board probes.
 
-    For exp16's value readout (`play_web/value_probe.py`), which answers HTTP
-    requests on the server's own threads while the AI worker is searching on
-    its own.
-
-    WHY A SECOND COPY RATHER THAN THE AGENT'S. `SearchRecommender.
-    _call_bc_recommend` temporarily mutates the shared `BcRecommender`'s
-    `deterministic` and `decode_mode` and restores them in a `finally`, and both
-    objects carry per-call torch state; calling `bc.recommend` on the same
-    instance from another thread is a race on the object the game is being
-    played with. This was MEASURED, not reasoned about: with the readout sharing
-    the agent's models, one seeded duel panel played three different games
-    (an internal analysis script, two `on_probed`
-    runs and `off_a`), and the duel's whole archive story is that the same seeds
-    reproduce the game. With an independent pair the same panel reproduces.
-
-    The price is one extra checkpoint load (~1.6 s, once) and the resident
-    memory of a second copy of the same weights. The alternative -- taking a
-    lock the AI worker holds -- would make the readout unavailable for the whole
-    of a 105 s turn, which is exactly when the human is shopping and wants it.
-
-    Same paths, so the same sha256s: `AgentHandle.describe()` stays the honest
-    identity of what produced the number.
-    """
+The search worker changes per-call decoder settings, so sharing its objects
+with a concurrent probe would introduce a race. Independent models keep probe
+requests from altering the search. This costs another copy of the same weights."""
     root = Path(repo_root) if repo_root is not None else repo_root_from_here()
 
     import torch

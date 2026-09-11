@@ -49,17 +49,7 @@
     }
   }
 
-  /* WHICH SERVER AM I LOOKING AT. Separate question from the one above, and
-     it cost a round trip on 2026-08-20: two play-web servers were running on
-     adjacent ports through one ssh tunnel, one on main and one on an unmerged
-     branch, and the pages were identical apart from the feature under test.
-     Ruihan reported the feature missing from the branch server; the access
-     logs showed his `/play` requests had all landed on the OTHER port, and
-     nothing on either page said which one it was.
 
-     `/api/build` already answered it and nothing showed it, so this paints it:
-     branch, short commit, and the PORT, because the port is the half the
-     tunnel can get wrong and the URL bar cannot tell you about. */
   function paintBadge(build) {
     if (!document.body) return;
     if (!badge) {
@@ -75,13 +65,11 @@
       ].join(';');
       document.body.appendChild(badge);
     }
-    const ref = String(build.head_ref || '').trim();
     const short = String(build.commit_short || build.commit || '').slice(0, 7);
     const port = window.location.port || '80';
     // `HEAD` is what a detached worktree reports, and printing it would read
     // as a branch name. The port and the commit still identify the server.
-    const where = ref && ref !== 'HEAD' ? ref : 'detached';
-    badge.textContent = `:${port} · ${where} @${short}${build.dirty ? ' (dirty)' : ''}`;
+    badge.textContent = `SAP-Arena-AI ${build.version || ''} · ${short}${build.dirty ? ' (modified)' : ''}`;
   }
 
   function announce(was, now) {

@@ -21,21 +21,6 @@ per `game_index` (so eval stays reproducible run to run, and repeated calls
 for the same index are stable); independent across indices (so parallel
 games never collide on the same draw).
 
-CORRECTION (2026-07-24): the first version of this fix instead sourced turn-1
-openings from REAL human replay data -- reconstructing each of 163 real
-games' verbatim pre-purchase turn-1 shop from its raw replay's
-`GenesisBuildModel` field (`replay_decode.decode_turn.genesis_shop_items`)
-and cycling `game_index` through that 163-game pool (with a seeded-roll
-fallback only beyond it). That was WRONG per the project owner: the turn-1
-shop was never meant to be modeled as a draw from real human openings -- see
-"THE FIX" above. The genesis/manifest/raw-replay-cache machinery that
-implemented the old, wrong version (`DEFAULT_MANIFEST_PATH`,
-`DEFAULT_RAW_REPLAY_CACHE`, the real/synthetic split, the portability
-fallback for a host missing the AutoDL-only raw-replay-cache data-disk file)
-is gone from this module entirely -- there is no file dependency left to be
-missing, so there is nothing left to fall back from. `VariedOpeningSource.
-state_for_game` is now a plain seeded roll for EVERY `game_index`, full stop.
-
 TRAINING DECORRELATION: parallel `--num-envs` training workers each count
 episodes from their OWN local 0, 1, 2, ... (`train_ppo.py::_make_env(rank)`,
 one `SubprocVecEnv` subprocess per rank) -- wiring `state_for_game` straight
@@ -49,8 +34,7 @@ together with the episode index into a distinct per-worker index sequence,
 fed to `state_for_game` in place of the bare episode index. EVAL's own
 direct `state_for_game(game_index)` calls (`eval_versus_fullgame.py`,
 single-process, no rank) are completely untouched -- nothing on the eval
-path ever calls this function.
-"""
+path ever calls this function."""
 
 from __future__ import annotations
 

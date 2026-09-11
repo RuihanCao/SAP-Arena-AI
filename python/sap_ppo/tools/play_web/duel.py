@@ -1,14 +1,4 @@
-"""Headless human-vs-AI duel core (exp16 W2).
-
-Two live shop sessions, one shared battle per turn. This module owns the
-GAME: two sides, their own shop / gold / engine seed, whose turn it is, when
-somebody has lost, and who won. It owns none of the AI: the AI's shop phase
-arrives as an injected `decide(state) -> [action, ...]` callable, which in
-this wave is a stub. W3 replaces that callable with the real segmented
-search driver; nothing here imports torch, and nothing here should need to
-once it does.
-
-What is deliberately NOT re-derived here:
+"""What is deliberately NOT re-derived here:
 
 - the battle -> lives arithmetic and the turn-3 heal, which live in
   `versus_lives.py` and reach us through `end_turn.resolve_duel_turn`
@@ -18,14 +8,7 @@ What is deliberately NOT re-derived here:
   same predicate the RL loop and the full-game driver already use. The only
   thing this module adds on top is the turn cap it hands that predicate,
   and the mapping from "somebody is done" to "who won", which no existing
-  module has because no existing frame is head-to-head.
-
-Duel rules (internal design notes): versus, 6 lives a side,
-the loser of a battle drops one, first side to 0 loses, both sides heal 1
-(capped) on the start of turn 3, and a game still alive after turn 30 is a
-draw. `--duel-rules arena` is plumbed through to exp13's real-arena life
-cap; see `resolve_duel_rules`.
-"""
+  module has because no existing frame is head-to-head."""
 
 from __future__ import annotations
 
@@ -53,10 +36,7 @@ DEFAULT_TURN_CAP = 30
 DEFAULT_DUEL_RULES = "versus"
 DUEL_RULES_CHOICES = ("versus", "arena")
 
-# exp13 W0a lands `ARENA_START_LIVES` (5) and the `max_lives` argument on
-# `versus_lives.py` together, on branch `exp13/w0-arena-harness`. Neither is
-# on this line's base yet, so `--duel-rules arena` is resolved lazily and
-# refuses loudly rather than silently falling back to the versus cap.
+
 _ARENA_START_LIVES: int | None = getattr(versus_lives, "ARENA_START_LIVES", None)
 _LIVES_FN_TAKES_MAX_LIVES = "max_lives" in inspect.signature(
     versus_lives.apply_battle_outcome_to_lives
@@ -71,18 +51,8 @@ class DuelRulesUnavailable(RuntimeError):
 class DuelRules:
     """One ruler for a duel.
 
-    `game_mode` is always `"versus"`, including for the arena ruler, and
-    that is not an oversight -- see `end_turn.resolve_duel_turn`'s docstring.
-    A duel is two-sided by construction: each side's
-    `meta.versus.opponent_lives` mirrors the other's `lives`, and that
-    mirror is what `TrainingEnv._is_done` reads. exp13's arena ruler is a
-    POOL ruler (5 lives, 10 trophies, opponents drawn from a pool); the part
-    of it that means anything head-to-head is its life cap, which is exactly
-    what `max_lives` selects here.
-
     `max_lives=None` means "leave `versus_lives.apply_battle_outcome_to_lives`
-    on its own default", which is 6.
-    """
+    on its own default", which is 6."""
 
     name: str
     game_mode: str
@@ -92,13 +62,7 @@ class DuelRules:
 
 
 def resolve_duel_rules(rules: str | DuelRules = DEFAULT_DUEL_RULES, *, turn_cap: int = DEFAULT_TURN_CAP) -> DuelRules:
-    """Name -> `DuelRules`. Pass a `DuelRules` through unchanged.
-
-    Raises `ValueError` for an unknown name and `DuelRulesUnavailable` for
-    `"arena"` on a checkout without exp13 W0a's `versus_lives` additions --
-    the alternative, quietly capping arena lives at 6, is the kind of
-    silent wrong number this wave exists to avoid.
-    """
+    """Name -> `DuelRules`. Pass a `DuelRules` through unchanged."""
     if isinstance(rules, DuelRules):
         return rules
     name = str(rules or "").strip().lower()
@@ -114,8 +78,8 @@ def resolve_duel_rules(rules: str | DuelRules = DEFAULT_DUEL_RULES, *, turn_cap:
         if _ARENA_START_LIVES is None or not _LIVES_FN_TAKES_MAX_LIVES:
             raise DuelRulesUnavailable(
                 "duel_rules_arena_unavailable: needs versus_lives.ARENA_START_LIVES and "
-                "apply_battle_outcome_to_lives(max_lives=...), both of which land with exp13 W0a "
-                "(branch exp13/w0-arena-harness). Until that merges, only --duel-rules versus runs."
+                 "apply_battle_outcome_to_lives(max_lives=...). "
+                "Use a compatible engine for Arena life rules."
             )
         return DuelRules(
             name="arena",
@@ -133,13 +97,7 @@ def add_duel_rules_argument(
     flag: str = "--duel-rules",
     default: str = DEFAULT_DUEL_RULES,
 ) -> argparse.ArgumentParser:
-    """Add `--duel-rules {versus,arena}` to a parser.
-
-    One definition so every future entry point (W3's duel smoke runner,
-    W5's server) spells the flag the same way. Selecting `arena` on a
-    checkout that cannot honor it fails at `resolve_duel_rules`, not here,
-    so `--help` always lists both.
-    """
+    """Add `--duel-rules {versus,arena}` to a parser."""
     parser.add_argument(
         flag,
         type=str,
@@ -147,7 +105,7 @@ def add_duel_rules_argument(
         default=default,
         help=(
             "life ruler for the duel: versus = 6 lives a side (default); "
-            "arena = exp13's real-arena life cap (requires exp13 W0a)"
+            "arena = Arena life rules"
         ),
     )
     return parser
@@ -205,15 +163,7 @@ def duel_terminal_status(
 
 @dataclass
 class DuelSide:
-    """One side's live session: the `SessionState` shape a duel needs.
-
-    Intentionally NOT `play_web/app.py::SessionState` itself. That dataclass
-    carries the browser's rendering state (image versions, predicted-board
-    rows, the sampled replay battle) and importing it would drag the
-    planner, the predictor and the replay player into a module whose whole
-    point is to stay light enough for a background worker thread. W5 wires
-    the two together at the App layer; the fields below are the overlap.
-    """
+    """One side's live session: the `SessionState` shape a duel needs."""
 
     name: str
     state: dict[str, Any]
@@ -251,15 +201,7 @@ class DuelSide:
 
 
 def _reroll_shop_transition_for_seed(state: dict[str, Any]) -> dict[str, Any]:
-    """Regenerate the shop from the state's own seed, gold unchanged.
-
-    Same trick as `play_web/app.py::App._roll_no_cost` (clear the shop, pay
-    for a roll out of a temporarily inflated purse, put the gold back), with
-    one deliberate difference: play-web forces `meta.seed_known = False` so
-    its shop is un-reproducible, and a duel needs the opposite -- both
-    sides' openings must be a pure function of their seeds so a game can be
-    replayed bit-for-bit (exp16 W3/W6).
-    """
+    """Regenerate the shop from the state's own seed, gold unchanged."""
     work = copy.deepcopy(state)
     target_gold = int(work.get("gold", 10))
     work["shop"] = []
@@ -290,19 +232,7 @@ def prepare_duel_side_state(
     feeds Snail's end-of-turn ability; an inherited "loss" would buff a
     board that never lost), empties the last-seen opponent board through the
     normal writer, and -- when a seed is given -- rolls the opening shop
-    from that seed so the two sides do not open on the same board.
-
-    `meta.game_rules` is written for a NON-versus ruler only, matching
-    exp13 W0a's own convention (`tools/eval_versus_fullgame.py`, which
-    writes it "under arena rules ONLY, so a versus state is byte-identical
-    to before this flag existed"). It is not decoration:
-    `schemas/state_v1.json` pins turn 1 to exactly 6 lives, and exp13
-    widens that to "exactly 5 when `meta.game_rules == arena`" -- so an
-    arena duel that skipped this flag would be rejected by `validate_state`
-    on its very first turn. `game_mode` stays `"versus"` regardless (see
-    `DuelRules`): the flag says WHICH ruler, the mode says how the lives are
-    booked, and a duel books them two-sidedly under either ruler.
-    """
+    from that seed so the two sides do not open on the same board."""
     state, _transition = _prepare_duel_side_state_with_transition(
         base_state,
         rules=rules,
@@ -346,21 +276,10 @@ def _prepare_duel_side_state_with_transition(
 def duel_battle_seed(seed: int, turn: int) -> int:
     """A per-(game, turn) battle seed, so a duel can be replayed.
 
-    The battle oracle is an UNSEEDED Monte-Carlo simulator by default: the
-    same pair of boards can go 18-2 over 20 runs, which is why exp16's PLAN
-    locks undo after a turn resolves (otherwise a lost battle could simply
-    be re-rolled). The calculator does accept `config.seed` and swaps in a
-    seeded `Math.random` for the run (`simulation-runner.ts` ->
-    `applySeededRandom`), so passing one makes ONE battle a pure function of
-    (game seed, turn) -- which is what "the same seeds reproduce the game"
-    and W6's replay archive need, and which also closes the reroll hole
-    rather than papering over it.
-
     sha256 rather than the builtin `hash()`, for the same reason
     `honest_frame.imagination_seed` uses it: `hash()` is salted per process.
     Truncated to 32 bits unsigned because the calculator's PRNG state is
-    `seed >>> 0`.
-    """
+    `seed >>> 0`."""
     key = f"exp16_duel_battle:{int(seed)}:{int(turn)}"
     digest = hashlib.sha256(key.encode("utf-8")).digest()
     return int.from_bytes(digest[:4], "big")
@@ -386,11 +305,7 @@ def seeded_battle_fn(
 
 
 def _noop_decide(_state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Default AI: buy nothing, just end the turn.
-
-    The seam W3 replaces. Kept trivial and side-effect free so a duel is
-    playable (and testable) end to end with no model on the box.
-    """
+    """Default AI: buy nothing, just end the turn."""
     return []
 
 
@@ -401,13 +316,7 @@ class DuelSession:
     way a browser drives play-web. The AI side is driven once per turn, at
     `end_turn()`, by the injected `ai_decide`. Both shop phases are applied
     to their own state; then ONE call to `resolve_duel_turn` runs the single
-    shared battle and both sides' post-battle bookkeeping.
-
-    `end_turn()` is all-or-nothing: an illegal AI action or a failed battle
-    leaves the session exactly as it was and returns `ok=False` with a code,
-    so the caller (W3) can apply its own "the AI stands still this turn"
-    policy instead of the session silently playing a weakened AI.
-    """
+    shared battle and both sides' post-battle bookkeeping."""
 
     def __init__(
         self,
@@ -459,10 +368,8 @@ class DuelSession:
         )
         self.turn_results: list[dict[str, Any]] = []
         self._group_seq = 0
-        # Where the CURRENT turn's human history starts. `undo_human_action`
-        # will not pop below it, which is what keeps undo inside the turn
-        # (exp16 PLAN risk 7: the battle is a sample, so an undo that reached
-        # back across a resolved turn could re-roll a lost battle).
+
+
         self._human_turn_mark = 0
         self._status = duel_terminal_status(self.human.state, self.ai.state, turn_cap=self.rules.turn_cap)
 
@@ -514,20 +421,7 @@ class DuelSession:
         return {"ok": True, "error": None, "transition": tr}
 
     def undo_human_action(self) -> dict[str, Any]:
-        """Undo the human's last shop action -- WITHIN this turn only (W5).
-
-        A composed group (W4's "buy into slot k") unwinds whole, the same way
-        `play_web/app.py::App.undo` unwinds it: the group is contiguous and
-        was appended together, so popping to its head is "keep popping while
-        the entry below carries the same id".
-
-        Refuses at `_human_turn_mark`, the index this turn's history starts
-        at. That refusal is the rule, not a convenience: `end_turn` resolves
-        ONE sampled battle per turn, so an undo that could reach back past a
-        resolved turn would let a lost battle be replayed until it was won
-        (exp16 PLAN risk 7). The AI's own thinking is untouched by this --
-        it is thinking about ITS board, which the human's shop cannot reach.
-        """
+        """Undo human action."""
         if self.done:
             return {"ok": False, "error": f"duel_over:{self.end_reason}", "transition": None}
         if len(self.human.history) <= int(self._human_turn_mark):
@@ -703,8 +597,7 @@ class DuelSession:
                 side.draws += 1
             side.last_battle = copy.deepcopy(battle)
 
-        # Same reversed convention `play_web/app.py` feeds
-        # `render_replay_image_from_calc_rows` (exp16 W6 renders from these).
+
         human_pets = list(human_payload["pet_configs"])
         ai_pets = list(ai_payload["pet_configs"])
         self.human.battle_rows.append(
@@ -741,10 +634,8 @@ class DuelSession:
                 "outcome": str(human_payload["outcome"]),
                 "life_bonus_applied": bool(human_payload["life_bonus_applied"]),
                 "board_pre_battle": copy.deepcopy(human_pets),
-                # The same board as `board_pre_battle`, in the ENGINE's own
-                # slot shape rather than the oracle's pet-config shape, so a
-                # browser can render it with the skin it already has (W5) and
-                # W6 can replay it through the engine.
+
+
                 "board_pre_battle_team": copy.deepcopy(
                     (human_payload.get("battle_state") or {}).get("team") or []
                 ),
@@ -767,7 +658,7 @@ class DuelSession:
         return {"ok": True, "error": None, "turn": int(turn), "result": result}
 
     def snapshot(self) -> dict[str, Any]:
-        """JSON-able view of the whole duel (exp16 W6's archive reads this)."""
+        """Snapshot."""
         return {
             "rules": {
                 "name": self.rules.name,

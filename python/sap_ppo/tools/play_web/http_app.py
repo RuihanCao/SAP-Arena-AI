@@ -17,6 +17,7 @@ from ..replay_player import REPLAY_HTML
 from .app import SURFACE_AGENT, App, history_token
 from .assets import static_path
 from .build_identity import build_identity
+from .public_metadata import public_payload
 from .replay_view import summarize_public_replay
 from .value_probe import meaning_for
 
@@ -148,22 +149,11 @@ def _duel_unavailable() -> dict[str, Any]:
 
 class Handler(BaseHTTPRequestHandler):
     app: App
-    # exp16 W5: the duel behind `/play`. `None` on a server started without
-    # one, in which case every `/api/duel/*` route answers `duel_unavailable`
-    # instead of raising -- `/sandbox` is unaffected either way, which is what
-    # keeps exp14's gate runnable on a box with no checkpoints.
+
+
     duel_app: Any = None
 
-    # HTTP/1.1, so one TCP connection carries the whole page instead of one per
-    # request. The stdlib default is HTTP/1.0, which closes after every reply,
-    # and this page is a poller: over Ruihan's tunnel (measured 244 ms RTT and
-    # 20% packet loss in internal design notes)
-    # a fresh connection per poll means a handshake per poll, and a dropped SYN
-    # costs a second before the request has even been sent. The 2026-08-13
-    # session saw 82 sockets in TIME_WAIT against `:8766` while one human
-    # played. Safe to switch on here because `_send` writes `content-length`
-    # for every body, and the only bodyless reply is the 304 in
-    # `_send_revalidated`, so no response's end is ambiguous.
+
     protocol_version = "HTTP/1.1"
     # A kept-alive connection otherwise parks its thread for the life of the
     # tab. `StreamRequestHandler.setup` turns this into a socket timeout, and
@@ -174,19 +164,7 @@ class Handler(BaseHTTPRequestHandler):
     # -- what the access log is allowed to claim ---------------------------
     def parse_request(self) -> bool:
         """Start the clock where the REQUEST starts, not where the connection
-        became free.
-
-        This was first stamped in `handle_one_request`, which is wrong the
-        moment keep-alive is on: that method begins by BLOCKING on the read of
-        the next request line, so on the second and later requests of a
-        connection the stamp landed while the browser was still thinking, and
-        the log then charged the server for the human's idle time. It read
-        plausibly and it was nonsense -- a first measurement of a real session
-        reported `p50 686 ms` for `status` and a `61 s` maximum on a server
-        whose handlers answer in single-digit milliseconds. `parse_request`
-        returns once the request line and headers are in, which is the first
-        moment this process has any work to do.
-        """
+        became free."""
         parsed = super().parse_request()
         self._request_started = time.perf_counter()
         self._body_bytes: int | None = None
@@ -239,14 +217,7 @@ class Handler(BaseHTTPRequestHandler):
         return getattr(self.app, "surface", None) == SURFACE_AGENT
 
     def _page_for(self, path: str) -> str | None:
-        """Which HTML page a top-level route serves, or None for 404.
-
-        The agent surface is the shop page and the engine API, full stop. The
-        menu, the duel and the duel's replay list are the HUMAN entry points,
-        so they are not merely disabled there -- they are not routes. The shop
-        page answers at `/` (which is what :8765 has always been) and at
-        `/sandbox` (which is what exp14's gate drives).
-        """
+        """Which HTML page a top-level route serves, or None for 404."""
         if self._agent_surface():
             return {"/": "index.html", "/sandbox": "index.html"}.get(path)
         return {
@@ -316,7 +287,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send(HTTPStatus.OK, body, content_type, cache_control=cache_control, etag=etag)
 
     def _send_json(self, status: int, payload: dict[str, Any]) -> None:
-        self._send(status, _json_bytes(payload), "application/json; charset=utf-8")
+        self._send(status, _json_bytes(public_payload(payload)), "application/json; charset=utf-8")
 
     def _send_state_json(
         self, status: int, payload: dict[str, Any], cursor: tuple[int, str] | None
@@ -396,12 +367,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
 
-        # exp16 W5 route table:
-        #   /          the menu (Play / Replays)
-        #   /play      the duel
-        #   /sandbox   the free-practice shop page -- exp14's gate's target
-        #   /replays   this project's own games (empty until they are archived)
-        #   /replay    the archived HUMAN replay player, untouched
+
         if path in ("/", "/play", "/sandbox", "/replays"):
             name = self._page_for(path)
             if name is None:
@@ -740,24 +706,17 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/apply":
-            # `App.apply` takes both shapes: `{"action": ...}` for one engine
-            # action and `{"compose": ...}` for a server-side group (exp16 W4).
+
+
             out = self.app.apply(payload)
             self._send_state_json(HTTPStatus.OK, out, cursor)
             return
 
         if self.path == "/api/infer/recommend":
-            out = self.app.recommend(payload)
-            self._send_json(HTTPStatus.OK, out)
+            self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Recommendation is not available in this demo."})
             return
 
-        # exp16 show-value (`DESIGN_show_value.md` section 4). Deliberately
-        # narrow, and deliberately answered by the DUEL: the V heads are loaded
-        # once, beside the agent that plays, and `app.py::App` has no learned
-        # value model at all (its `value_model_loaded` is the exp04 tempo
-        # planner's). A server started with `--no-duel` therefore answers
-        # `value_unavailable` here, which is the same shape every `/api/duel/*`
-        # route answers on such a server rather than a stack trace.
+
         if self.path == "/api/infer/value":
             duel = self._duel()
             if duel is None:
@@ -782,12 +741,8 @@ class Handler(BaseHTTPRequestHandler):
                     seed_value = int(seed) if seed is not None else None
                 except (TypeError, ValueError):
                     seed_value = None
-                # Amendment 6. The settings card sends both knobs with the
-                # New game. `Number("abc")` reaches us as null, which is
-                # indistinguishable from "not sent" once it is a value, so a
-                # field that WAS sent and reads as null is refused loudly for
-                # the same reason `config` refuses it: saying ok to that
-                # silently starts a game on a setting the human did not pick.
+
+
                 unreadable = [
                     name
                     for name in ("deepen_width", "turn_budget_s", "search_width")
@@ -826,31 +781,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_state_json(HTTPStatus.OK, duel.end_turn(), cursor)
                 return
             if route == "config":
-                gear = payload.get("gear")
-                width = payload.get("width")
-                turn_budget_s = payload.get("turn_budget_s")
-                if "turn_budget_s" in payload and turn_budget_s is None:
-                    # The field was sent and could not be read as a number
-                    # (the page sends `Number("abc")` as null). Saying
-                    # "ok" to that is a silent no-op on a control the human
-                    # just used, so it is refused loudly instead.
-                    self._send_state_json(
-                        HTTPStatus.OK,
-                        {
-                            "ok": False,
-                            "error": "duel_bad_turn_budget_s",
-                            "state": duel.snapshot(),
-                        },
-                        cursor,
-                    )
-                    return
                 self._send_state_json(
-                    HTTPStatus.OK,
-                    duel.set_config(
-                        gear=str(gear) if gear is not None else None,
-                        width=width,
-                        turn_budget_s=turn_budget_s,
-                    ),
+                    HTTPStatus.BAD_REQUEST,
+                    {"ok": False, "error": "Choose settings before starting a new game.",
+                     "state": duel.snapshot()},
                     cursor,
                 )
                 return

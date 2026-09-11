@@ -1,21 +1,4 @@
-"""V_game model (exp12 W1c): frozen a2_attn features + P(win)/battle/margin heads.
-
-The value function that replaces the search's Monte-Carlo leaf (PLAN.md
-W1). Representation transfer is the whole bet: the a2_attn BC checkpoint's
-`SlotEmbeddingExtractor` (exp10 W4.1, `train/features.py`) already learned
-pet-identity embeddings + slot attention from 217k human decisions, so
-V_game FREEZES it and trains only a small trunk + three heads on the 22.5k
-afterstate rows of `build_afterstate_value_dataset.py`:
-
-- `p_win`: P(player wins the whole game | afterstate), the search-leaf
-  scalar. Main head, BCE on the W1a game label.
-- `battle_wdl`: this turn's battle W/D/L (aux 0.3): a denser, nearer
-  signal over the same features; rows whose turn has no recorded battle
-  (battle_wdl = -1) are masked out of this loss, never out of the batch.
-- `margin`: final lives margin / 6 (aux 0.1): regression tail that
-  separates "barely wins" from "stomps".
-
-Freezing is LITERAL: `load_frozen_extractor` rebuilds the extractor from
+"""Freezing is LITERAL: `load_frozen_extractor` rebuilds the extractor from
 code, strict-loads the checkpoint's weights key-for-key (so a drift in
 `features.py` fails loudly instead of silently re-randomizing), then sets
 `requires_grad=False` + eval mode. `assert_frozen` re-checks both at use
@@ -24,29 +7,9 @@ precomputes its 736-dim features once and trains heads on the cache; the
 serve path (`VGameModel.forward`) runs the full extractor + heads and is
 pinned equal to the cached path by a unit test.
 
-## Two artifact kinds (exp12 W1'c, PLAN amendment 2026-07-29)
-
-W1'c runs TWO training arms, so `save_heads` writes two artifact kinds and
-`load_vgame_model` reads both. `mode` in the payload says which (absent ==
-`"frozen"`, so every W1 artifact still loads):
-
-- `"frozen"` (arm i, v1 apparatus unchanged): heads only. The extractor
-  comes entirely from `--extractor`'s BC checkpoint, and the payload's
-  `extractor_sha256` pins THAT file: a mismatch means the heads are being
-  served on top of weights they never saw, so the load raises.
-- `"unfrozen"` (arm ii, route a): heads PLUS a fine-tuned COPY of the
-  extractor's weights (`extractor_state`). The deployed BC checkpoint file
-  is never written -- `clone_trainable_extractor` deep-copies it in memory
-  and only the copy trains. `extractor_sha256` still pins the ORIGIN
-  checkpoint, and the load still rejects a mismatch: the origin file is
-  where the architecture, observation space and provenance come from, so a
-  different file means a different model even though the weights ride
-  along in the artifact.
-
 Both kinds serve identically: `load_vgame_model` returns a `VGameModel`
 whose extractor is frozen + eval, so `assert_frozen` holds at serve time
-for the fine-tuned copy too.
-"""
+for the fine-tuned copy too."""
 
 from __future__ import annotations
 
@@ -82,15 +45,7 @@ ARTIFACT_MODE_FROZEN = "frozen"
 ARTIFACT_MODE_UNFROZEN = "unfrozen"
 ARTIFACT_MODES = (ARTIFACT_MODE_FROZEN, ARTIFACT_MODE_UNFROZEN)
 
-# Scalar bypass fed straight to the heads (W1c finding: the BC-frozen
-# extractor was trained while state lives was a CONSTANT 6 and turn-1
-# opponent_lives a constant 0, so its weights on exactly the race-state
-# dims are untrained noise and the frozen features cannot carry them --
-# measured: naive lives-opp margin alone out-AUCed a bypass-less V_game
-# 0.6511 vs 0.6108 on val). The encoder stays frozen and untouched; the
-# race scalars just enter AFTER it. Order and normalizers are part of the
-# serve contract -- W2's scorer must call `bypass_features` with the TRUE
-# engine race values (RESULTS_W1 finding 9).
+
 BYPASS_DIM = 4
 BYPASS_TURN_NORM = 15.0
 BYPASS_LIVES_NORM = 6.0
@@ -178,18 +133,7 @@ def assert_frozen(module: nn.Module) -> None:
 
 
 def clone_trainable_extractor(extractor: nn.Module) -> nn.Module:
-    """A deep COPY of `extractor`, re-enabled for training (route a, W1'c
-    arm ii).
-
-    The point of the copy is the one thing the amendment made
-    non-negotiable: W2 still deploys the a2_attn BC checkpoint, so the
-    fine-tune must never reach it. Nothing here writes the checkpoint file
-    -- `load_frozen_extractor` opened it read-only, this deep-copies the
-    module it built, and only the copy ever sees a gradient. The original
-    module stays frozen + eval, and `extractor_param_delta` below is the
-    after-the-fact proof that the copy moved and (if the caller passes the
-    original twice) that the original did not.
-    """
+    """Clone trainable extractor."""
     clone = copy.deepcopy(extractor)
     clone.requires_grad_(True)
     clone.train()
@@ -279,12 +223,7 @@ class VGameHeads(nn.Module):
 
 
 class VGameModel(nn.Module):
-    """Serve-path module: frozen extractor + heads, obs vector in, P(win) out.
-
-    W2's vgame_scorer feeds states whose lives/wins/opponent_lives are the
-    TRUE engine race values at decision time (RESULTS_W1 finding 9), encoded
-    by the same v4 encoder as training.
-    """
+    """Serve-path module: frozen extractor + heads, obs vector in, P(win) out."""
 
     def __init__(self, extractor: nn.Module, heads: VGameHeads) -> None:
         super().__init__()

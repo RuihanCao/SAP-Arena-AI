@@ -1,6 +1,4 @@
-"""exp16 AI turn execution under one fixed wall-clock budget.
-
-WHAT IT IS FOR. In a duel the AI starts thinking at the TOP OF THE HUMAN'S
+"""WHAT IT IS FOR. In a duel the AI starts thinking at the TOP OF THE HUMAN'S
 TURN and keeps thinking while the human shops. When the human presses
 "End turn" the browser waits for the same AI turn that was already running.
 Human timing never changes search strength. The only normal stop is the
@@ -20,19 +18,11 @@ that debt is automatically charged to the remaining global clock.
 
 THE TWO GEARS:
 
-- `measured`: 72 candidates per segment. This is the width exp12's numbers
-  were produced at, so "how strong is it" has a published answer.
-- `full-clock`: a configurable 105 s per-turn default split across segments,
-  each slice = remaining_time / expected_remaining_segments, seeded from
-  Structural A2's measured mean of approximately 2.93. Width 4096 is only an
-  emergency guard; the deadline is the normal stop.
-
 FAILURE IS LOUD, NEVER QUIETLY WEAKER. Any failure -- decode, a divergence,
 an exception -- returns `ok=False` with a code and NO actions, so the caller
 plays the "AI stands still this turn" policy and shows
 `AI failed turn N: <code>`. The partially committed ops are still reported
-(`partial_actions`) for diagnosis but are deliberately not the turn.
-"""
+(`partial_actions`) for diagnosis but are deliberately not the turn."""
 
 from __future__ import annotations
 
@@ -56,12 +46,8 @@ STATUS_FAILED = "failed"
 
 GEAR_MEASURED = "measured"
 GEAR_FULL_CLOCK = "full-clock"
-#: exp16 W11b. Pin the OUTER width like `measured`, then spend whatever is left
-#: of the segment's slice on more imagined samples (k) instead of more
-#: candidates. The two existing gears both trade the clock for WIDTH; nothing
-#: spent it on resolution. Level-synchronous, so every group always holds the
-#: same number of samples -- `search_recommender._search_anytime` owns that and
-#: says why.
+
+
 GEAR_RESAMPLE_CLOCK = "resample-clock"
 GEARS = (GEAR_MEASURED, GEAR_FULL_CLOCK, GEAR_RESAMPLE_CLOCK)
 #: Gears that run on the turn clock: the segment gets a slice, and the search
@@ -80,48 +66,27 @@ CLOCKED_GEARS = (GEAR_FULL_CLOCK, GEAR_RESAMPLE_CLOCK)
 #: reached the requested width" means the safety cap bound rather than the
 #: setting being honoured.
 FLOATING_WIDTH_GEARS = (GEAR_FULL_CLOCK,)
-#: Ceiling on a width the SETTINGS CARD may pin, and deliberately the same
-#: number as that input's own `max`, so the page and the server cannot disagree.
-#: Without it `resample-clock` had no finite wall clock at all: its width is a
-#: commitment, so `should_stop()` waits for it, and the card's JS validated only
-#: "a whole number, 1 or more". Typing seven digits was enough to occupy the one
-#: inference thread indefinitely, and `await_turn`'s timeout returns to the
-#: caller without stopping the worker. (codex review, 2026-08-21.)
+
+
 MAX_SETTABLE_SEARCH_WIDTH = 4096
 
 # Structural A2 measured 2.93 segments per turn. This is only the initial
 # allocator prior; every real segment recomputes from the remaining clock.
 DEFAULT_MEAN_SEGMENTS = 3.0
-# exp16 Wave 4. `mean_segments` is a PRIOR, and the Wave 3 archive shows it
-# is wrong on 31% of turns (n_segments 1:1, 2:15, 3:6, 4:10 over 32 turns).
-# So a segment never spends the whole remaining clock: it holds back this
-# fraction of the turn budget, which keeps the next segment's slice
-# positive however many segments actually arrive.
+
+
 DEFAULT_TAIL_RESERVE_FRAC = 0.10
 # Past the clock the fallback is one greedy BC chain, not a bare END_TURN.
 # Bound how many of those a single turn may take, so a pathological chain
 # cannot walk the turn out to `max_segments` at ~50 ms each.
 DEFAULT_MAX_DEADLINE_GREEDY = 4
-# Wave 4 review: `turn_budget_s` reached `AiTurnConfig` straight off an
-# HTTP payload with no upper bound, so a POST of 100000 bought a 27-hour
-# AI turn with no backstop. The UI already advertises 1..600; the server
-# now enforces it instead of trusting the input element.
+
+
 MIN_TURN_BUDGET_S = 0.01
 MAX_TURN_BUDGET_S = 600.0
 DEFAULT_TURN_BUDGET_S = 105.0
-# A SAFETY VALVE, NOT A BUDGET, and 4096 stopped being one.
-# `PLAN_A2_FIXED_CLOCK_8766.md` introduced it as "a high safety-only cap,
-# initially 4096", with the deadline as the normal stop. `RESULTS_A3.md`
-# (2026-08-19) then measured it binding on 16 of 16 duel segments at a median
-# 19.8 s inside a 35 s segment budget, which is 43% of the segment clock left
-# unused because the valve, not the clock, was deciding how wide the search got.
-#
-# 32768 restores the intent. The fastest rate that round measured is about 277
-# candidates per second, and the longest a single segment can run is the whole
-# 105 s turn budget, so the most a segment can physically generate is around
-# 29,000. A cap above that is unreachable in normal play, which is what a safety
-# valve is for. It still fires on a runaway, and `stop_reason` still records it,
-# so if it ever binds again that shows up as a reading rather than as silence.
+
+
 DEFAULT_FULL_CLOCK_MAX_WIDTH = 32768
 DEFAULT_ADAPTIVE_CHUNK_SIZES = (1, 2, 4, 8, 16)
 DEFAULT_INITIAL_CANDIDATE_S = 0.125
@@ -140,8 +105,8 @@ class _StaleTurn(Exception):
 @dataclass
 class AiTurnConfig:
     chunk_size: int = DEFAULT_ANYTIME_CHUNK
-    # Adaptive batching is an experiment arm until the accepted equal-clock
-    # benchmark proves a throughput gain. Fixed chunk=1 is the safe default.
+
+
     adaptive_chunks: bool = False
     adaptive_chunk_sizes: tuple[int, ...] = DEFAULT_ADAPTIVE_CHUNK_SIZES
     initial_candidate_s: float = DEFAULT_INITIAL_CANDIDATE_S
@@ -242,7 +207,7 @@ class _Progress:
 
 
 class AiTurnWorker:
-    """Plays the AI's whole turn through exp13's segmented-honest path."""
+    """Aiturnworker."""
 
     def __init__(
         self,
@@ -326,7 +291,7 @@ class AiTurnWorker:
         human's turn). `gen` fences the result: `await_turn` refuses a result
         whose generation is no longer current.
 
-        `engine_seed` is A1 ruling 1's imagination key base: the GAME's own
+        `engine_seed` is the imagination key base: the GAME's own
         engine seed, which in a duel is the side's `DuelSession` seed. It is
         passed rather than read off `meta.seed`, because by turn N the play
         stream has chained that forward and keying imagination on it would
@@ -494,19 +459,8 @@ class AiTurnWorker:
                 self._progress.realised_samples = None
 
             if budget_exhausted:
-                # Do not start fresh inference after the global clock. A
-                # structural outcome can invalidate the chain selected by the
-                # preceding segment, so nothing here may search.
-                #
-                # exp16 Wave 4: this used to return a bare END_TURN at width 0,
-                # which is strictly worse play than the behaviour clone's own
-                # move. A turn that ran out of clock stopped playing while
-                # holding gold and an open slot, having just paid for a roll.
-                # One greedy BC chain costs ~30-66 ms and is bounded, so that
-                # is the fallback now. `max_deadline_greedy` bounds how many a
-                # turn may take. The chunk-budget path is a deterministic test
-                # control and keeps the old END_TURN behaviour, so replay
-                # equivalence stays a pure function of the seeds.
+
+
                 use_greedy = (
                     clock_exhausted
                     and not chunk_exhausted
@@ -571,15 +525,8 @@ class AiTurnWorker:
             width = self._segment_width(segment_index, started, cfg)
             if cfg.gear in CLOCKED_GEARS:
                 remaining_s = max(0.0, global_deadline - seg_started)
-                # exp16 Wave 4. `max(1.0, ...)` made the segment at
-                # `mean_segments - 1` the notional last one and handed it
-                # the entire remaining clock, so a turn that then hit one
-                # more structural boundary played NOTHING: 10 of 10
-                # four-segment turns in the Wave 3 archive committed zero
-                # ops in their final segment, after paying for the roll
-                # that created it. The prior still shapes the split, but a
-                # reserve now bounds it, so the next segment's slice is
-                # positive by construction.
+
+
                 expected_remaining = max(1.0, float(cfg.mean_segments) - float(segment_index))
                 reserve_s = min(
                     remaining_s * 0.5,
@@ -718,16 +665,8 @@ class AiTurnWorker:
                 stop_reason = "deadline"
             else:
                 stop_reason = "search_complete"
-            # Recorded independently of the label above: the cap and a deadline
-            # can both be true of the same segment, and the label can only name
-            # one of them. Wave 4 found a cap hit at or after the deadline
-            # instant was labelled a deadline stop with safety_cap_hit False,
-            # so the operator tuning the cap never learned it was binding.
-            # FLOATING, not "not measured". `resample-clock` pins the width
-            # exactly as `measured` does, so under the old test every one of
-            # its segments reported its own setting as a cap hit and the turn
-            # then claimed `safety_cap_hit`. Only a gear whose width floats can
-            # be capped by the cap.
+
+
             width_capped = bool(
                 cfg.gear in FLOATING_WIDTH_GEARS and searched_width >= int(width)
             )
@@ -767,24 +706,15 @@ class AiTurnWorker:
                     ),
                     "stop_reason": stop_reason,
                     "width_capped": width_capped,
-                    # exp16 A3. Scalars on purpose: `duel_app._live_segment_
-                    # record` keeps scalars and drops structure, so these reach
-                    # the page as well as the durable archive.
-                    #
-                    # Passed through RAW, so all five are `null` together on a
-                    # segment whose search was skipped or degraded to greedy
-                    # (`_annotate_skip` emits no completion fields). Coercing
-                    # them to `bc_greedy`/1/0 would have that segment claim the
-                    # old policy ran when no policy ran at all.
+
+
                     "completion_policy": rec.get("search_completion_policy"),
                     "completion_width": rec.get("search_completion_width"),
                     "completion_aggregate": rec.get("search_completion_aggregate"),
                     "completion_decided": rec.get("search_completion_decided"),
                     "completion_divergent": rec.get("search_completion_divergent"),
-                    # W11b, under the same RAW pass-through rule as the five
-                    # above: all null together on a segment whose search was
-                    # skipped, rather than a zero that would claim the gear ran
-                    # and added nothing.
+
+
                     "realised_stochastic_samples": rec.get("search_realised_stochastic_samples"),
                     "extra_sample_levels": rec.get("search_extra_sample_levels"),
                     # A scalar, because the live projection keeps scalars and
@@ -813,10 +743,8 @@ class AiTurnWorker:
                 honest=True,
                 game_engine_seed=int(engine_seed),
                 race_wins=int(wins),
-                # exp16 PLAN risk 5: UNCONDITIONALLY, every segment. Without
-                # it `_race_scalars` raises `vgame_race_wins_unset`, the V
-                # leaf refuses to score and the search degrades to greedy BC
-                # -- silently, and only in the direction of "weaker".
+
+
                 set_race_context=agent.search.set_race_context,
                 set_imagination_context=agent.search.set_imagination_context,
                 decide=_decide,
@@ -826,8 +754,8 @@ class AiTurnWorker:
             if int(self.generation) != int(gen):
                 raise _StaleTurn(f"stale:{gen}")
         except _StaleTurn:
-            # Deliberately does NOT touch the status: a newer turn may already
-            # be queued behind this one and must not inherit a stale verdict.
+
+
             return _failure(gen=gen, turn=turn, code="ai_stale_generation", cfg=cfg)
         except Exception as exc:
             self._finish(STATUS_FAILED, gen=gen)
@@ -892,21 +820,16 @@ class AiTurnWorker:
                 1 for s in segment_stats if s["mode"] == "deadline-greedy"
             ),
             "greedy_segments": 0,
-            # exp16 A3, turn totals. `decided` is the DENOMINATOR (imagined
-            # samples that had more than one completion to choose between) and
-            # is 0 under `bc_greedy`, which is the honest reading: nothing was
-            # decided, rather than everything agreeing.
+
+
             "completion_decided": sum(
                 int(s.get("completion_decided") or 0) for s in segment_stats
             ),
             "completion_divergent": sum(
                 int(s.get("completion_divergent") or 0) for s in segment_stats
             ),
-            # W11b turn totals. `realised_stochastic_samples` is a per-segment
-            # LEVEL, not a count of things, so summing it would mean nothing:
-            # the turn reports the highest any segment reached, plus the total
-            # extra levels bought. None when no segment searched, so a turn that
-            # never ran the gear does not read as "ran it and got zero".
+
+
             "realised_stochastic_samples": max(
                 (int(s["realised_stochastic_samples"]) for s in segment_stats
                  if s.get("realised_stochastic_samples") is not None),
@@ -969,12 +892,8 @@ class AiTurnWorker:
             ),
             "human_waiting": stop_at is not None,
             "stop_latency_ms": stop_latency_ms,
-            # `cfg`, NOT `self.config`: exp16 W5 lets the page swap the config
-            # mid-game, and a turn already in flight keeps the one it started
-            # under (`cfg` is bound once, at the top of this method). Reporting
-            # the LIVE config here would label a turn with a gear it never ran
-            # on -- which is exactly the "how hard did it think" number the duel
-            # page shows the human.
+
+
             "gear": cfg.gear,
             "finish_turn": bool(cfg.finish_turn),
             "chunk_size": int(cfg.chunk_size),
@@ -990,7 +909,7 @@ class AiTurnWorker:
     ) -> None:
         with self._lock:
             if gen is not None and int(gen) != int(self._generation):
-                return  # fenced off; a newer turn owns the status now
+                return
             self._status = status
             self._result = result
 
@@ -1010,7 +929,7 @@ def candidate_stream_key(*, engine_seed: int, turn: int, segment_index: int) -> 
 
 
 def _engine_seed(state: dict[str, Any]) -> int:
-    """A1 ruling 1's `engine_seed`: the GAME's own seed.
+    """The imagination key base: the game's own seed.
 
     In a duel each side's seed is fixed for the whole game
     (`DuelSession(ai_seed=...)` writes it once into `meta.seed` and the

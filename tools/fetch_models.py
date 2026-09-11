@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Download the two release weights: python tools/fetch_models.py.
-
-For private repository access, authenticate GitHub CLI with ``gh auth login``.
-SAP_MODELS_URL and SAP_MODELS_DIR can override the source and destination.
-"""
+"""Download the two release weights: python tools/fetch_models.py."""
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +15,7 @@ RELEASE = "v0.1.0"
 DEFAULT_URL = f"https://github.com/{REPOSITORY}/releases/download/{RELEASE}"
 DEFAULT_DIR = Path(__file__).resolve().parents[1] / "models"
 
-# Runtime bundle: the original attention BC proposer and its b1 value head.
+# Runtime bundle: the attention BC proposer and its compatible value head.
 # The head carries its leaf-value mapping; no external curve is required.
 FILES = {
     "bc_attn_v4.zip": "5ae652854896aa92273523b741c65fe45c10e461adffb7082f853b99221a64cc",

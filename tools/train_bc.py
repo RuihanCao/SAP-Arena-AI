@@ -13,10 +13,7 @@ entry uses v4_one_turn_context (1993 inputs), slot_attn and [256,256] trunks.
 shape/class loading. It is never overwritten. Otherwise weights start random.
 Outputs include checkpoint_best.zip, checkpoint_final.zip and training metrics.
 The ZIP can be used as a BC proposer. It does NOT replace the extractor pinned
-inside an existing trophy V; keep that V's original extractor checkpoint.
-
-Example: python tools/train_bc.py --train train.jsonl --val val.jsonl --out results/bc
-"""
+inside an existing trophy V; keep that V's original extractor checkpoint."""
 from __future__ import annotations
 
 import argparse

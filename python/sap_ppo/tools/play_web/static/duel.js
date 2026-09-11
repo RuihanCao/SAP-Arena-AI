@@ -1,72 +1,10 @@
-/* exp16 W5: the duel page's own chrome, on top of the exp14 shop skin.
 
-   WHAT THIS FILE OWNS. Everything the skin does not know about: the opponent
-   lane, the thinking badge, the gear switch, the per-turn record, the failure
-   banner and the end screen. The human's own board and shop are rendered by
-   `app.js`, unchanged, against `/api/duel/*` -- see `apiPath` there.
-
-   THE OPPONENT LANE IS A STATE MACHINE WITH THREE STATES (W5.1), and which
-   one it is in is on the element (`#ai-lane[data-phase]`) rather than in a
-   variable only this file can see. Which turn's board is on screen rides on
-   the same element as `data-seen-turn`:
-
-     unseen     no battle has resolved yet, so there is nothing the human has
-                been shown. The curtain is up. This is the ONLY state with a
-                curtain, and a game passes through it once, at the start.
-     revealed   the board that just FOUGHT, next to its result.
-     last-seen  that same board, left standing while the next turn is played.
-
-   W5.1 REPLACED THE OLD `pending` STATE. Until W5 the reveal ran on a 6 s
-   timer that put the lane back behind the curtain, so most of a turn was spent
-   looking at a hatched rectangle. What that curtain hid is exactly what the
-   real client leaves standing -- the opponent's board as you last saw it -- so
-   the dwell now ends in `last-seen`, and pressing End turn leaves the board
-   alone instead of clearing it.
-
-   THAT IS NOT A LEAK. The server only ever sends the board of a turn whose
-   battle has already RESOLVED (`duel.turns[i].ai_board`); the board the AI is
-   choosing right now never enters a snapshot, which
-   `test_exp16_duel_app.py::TestOpponentIsHidden` greps for. So `data-seen-turn`
-   is always a turn in the past, and `gate_duel.py` asserts it is exactly
-   `turn - 1` before every battle.
-
-   THE TWO BOARDS FACE EACH OTHER (W5.1). `renderBoard` takes a side. The
-   human's board keeps the shop scene's own order and mirroring (slot 0 on the
-   right, art mirrored so the front rank faces right); the AI is the ENEMY, so
-   its slot 0 is on the LEFT, its art is not mirrored, and its level plaque
-   mirrors with it to the top-right corner. Attack and health do NOT mirror:
-   the real client draws attack left of health on both sides. Reference =
-   exp15's captured battle frames, `strips_final/strip_00`, REAL row.
-
-   NOTHING HERE INVENTS A NUMBER. The searched/deadline counts, the widths, the
-   elapsed times and the lives all come from the server's per-turn record
-   (`duel.turns[]`), which is the same record W6 archives. */
 
 (function () {
-  /* THE POLL'S TWO CADENCES, and why it is not one.
 
-     This poll exists for one thing: the AI's clock is asynchronous, so the
-     badge and the render card have to ask. Nothing the human does needs it --
-     every mutation answers with the state it produced.
-
-     It used to be a flat 250 ms with no in-flight guard, which is fine on
-     loopback and hostile over a tunnel. At Ruihan's measured 244 ms RTT with
-     20% packet loss the browser fired four polls a second and completed about
-     one; on 2026-08-13 the server logged ~76 of the 240 polls a minute it was
-     being sent. The other three quarters sat in Chrome's six-connections-per-
-     host queue -- and a Roll or a Buy has to queue there too, behind polls
-     that are only asking whether an idle AI is still idle.
-
-     So: fast only while the AI's clock is actually running or a battle is
-     resolving, slow while the human shops, and never more than one in flight.
-     The badge's numbers come off the server payload, so the cadence IS their
-     resolution; half a second on a seconds counter is not visible, and 250 ms
-     was never buying anything a human could see. */
   const POLL_ACTIVE_MS = 500;
   const POLL_IDLE_MS = 1500;
-  // exp16 show-value: how long the live board readout waits after the last
-  // repaint before asking the server. Every buy/roll/reorder repaints, and a
-  // request per keystroke of shopping would be a self-inflicted load.
+
   const VALUE_DEBOUNCE_MS = Number(window.__SAP_DUEL_VALUE_DEBOUNCE_MS || 220);
   const VALUE_PLACEHOLDER = '--';
   // The two wordings the server is allowed to send, keyed the way it keys them.
@@ -83,11 +21,7 @@
     end_of_turn: 'the board as it stands at end of turn',
     bc_completed: 'NOT this move’s value: take it, then BC finishes the turn',
   };
-  // How long the board stays in its `revealed` styling after its battle before
-  // it settles into `last-seen`. It does not go away at the end of it -- W5.1
-  // -- so this is only how long the fresh result stays highlighted.
-  // Overridable so a test can pick its own dwell without the page shipping a
-  // different one.
+
   const REVEAL_MS = Number(window.__SAP_DUEL_REVEAL_MS || 6000);
 
   const SIDE_AI = 'ai';
@@ -97,13 +31,7 @@
   // response rather than from a status sample. It never claims to be the AI.
   const HANDOVER_SAMPLE = {status: 'handover'};
 
-  // What the badge showed, what phase the lane was in, and WHAT THE AI ITSELF
-  // REPORTED at the same instant, per turn. The gate reads this to check the
-  // badge against reality instead of trying to catch a 400 ms window by
-  // polling the DOM from outside. `badgeVsWorker` is what makes "the badge
-  // claimed the battle was resolving while the AI was still choosing its turn"
-  // a checkable statement rather than something only a human watching the page
-  // can notice -- which is how it survived until 2026-08-06.
+
   const observations = {byTurn: {}};
   window.__SAP_DUEL_OBS = observations;
 
@@ -122,20 +50,7 @@
   // The AI's last reported status, so that the moment End turn is pressed the
   // badge can keep telling the truth instead of blanking to a fixed string.
   let lastWorker = {status: 'idle'};
-  // When the BATTLE started resolving, or null while the AI is still choosing
-  // its turn. It is a latch: inside one End turn it only ever goes thinking ->
-  // resolving. `duel_app.py::end_turn` submits the NEXT turn to the worker
-  // before its response is serialised, so without the latch the badge would
-  // flip back to `thinking` for the tail of the request.
-  //
-  // WHAT THE LATCH IS ALLOWED TO FIRE ON matters as much as the latch. It used
-  // to fire on ANY sample that was not literally `thinking`, which made one
-  // out-of-order `/api/duel/status` response -- generated before this turn's
-  // `_submit_ai_turn` and delivered after the human pressed End turn, carrying
-  // `ready` or `idle` -- pin the badge to `resolving the battle…` for the whole
-  // of the AI's 105 s turn. That is the 2026-08-06 defect again, wearing the
-  // fix's clothes. It now fires only on a sample that is demonstrably about
-  // the turn being ended or a later one; see `badgeStatusNow`.
+
   let resolvingSince = null;
   // The newest worker generation the page has accepted. `worker.gen` is
   // `DuelApp._gen`, bumped once per submitted turn and never reset by a New
@@ -163,20 +78,7 @@
   let busy = false;
   let gameEpoch = 0;
   let serverGameGeneration = null;
-  /* THE SERVER THIS PAGE IS TALKING TO HAS RESTARTED.
 
-     `game_generation` counts games inside ONE process and only ever goes up
-     (`DuelApp._game_status_token`, bumped by `new_game` and by nothing else),
-     so a value BELOW the one this page pinned cannot happen without the
-     process being replaced. Until now the page said nothing about it:
-     `acceptsGameGeneration` dropped the response and the poll returned, so the
-     badge froze, the board stayed up, and the whole thing looked exactly like
-     an AI taking a long time. On 2026-08-19 a deploy orphaned Ruihan's open
-     page and he read it as a stall.
-
-     Latched rather than re-derived, because once it is true every later poll
-     is about a game this page has never seen. Cleared only by New game, which
-     is the one action that still works against the new process. */
   let serverRestarted = false;
   let renderGeneration = null;
   let activeRenderKey = null;
@@ -197,13 +99,7 @@
     });
   }
 
-  /* WHAT MADE THE PAGE SAY THE BATTLE WAS RESOLVING, recorded the instant it
-     decided. This is the claim that matters and the one a stream of
-     `badge/worker` pairs cannot express: `resolving` next to a `thinking`
-     worker is the 2026-08-06 defect when the worker is thinking about the turn
-     being ended, and completely normal when it is already thinking about the
-     next one (`end_turn` submits it before it replies). The turn numbers are
-     what tells those apart, so they are what gets recorded. */
+
   function noteHandover(source, worker) {
     if (endingTurnNumber === null) return;
     const workerTurn = Number(worker && worker.turn);
@@ -219,8 +115,7 @@
     const row = observationRow(turn);
     if (row.statuses[row.statuses.length - 1] !== status) row.statuses.push(status);
     if (row.phases[row.phases.length - 1] !== phase) row.phases.push(phase);
-    // The badge next to what the AI actually said at that instant.
-    // `resolving/thinking` in here is precisely the 2026-08-06 defect.
+
     const pair = `${status}/${String((worker && worker.status) || '')}`;
     if (row.badgeVsWorker[row.badgeVsWorker.length - 1] !== pair) {
       row.badgeVsWorker.push(pair);
@@ -236,44 +131,14 @@
      same shared helpers the human's board uses, so the two boards are the same
      skin rather than a lookalike. */
   function boardCardHTML(slot, side) {
-    // `is-enemy` is what carries the mirroring that is not the sprite's own:
-    // the level plaque moves to the top-RIGHT corner (`duel.css`). The attack
-    // and health badges are deliberately left alone.
-    const enemy = side === SIDE_AI;
-    const enemyCls = enemy ? ' is-enemy' : '';
-    const itemId = slot && slot.pet_id;
-    if (!itemId) {
-      return `<div class="card team-card is-empty is-readonly${enemyCls}">` + SLAB_SVG + '</div>';
-    }
-    const atk = slot.attack ?? 0;
-    const hp = slot.health ?? 0;
-    const tip = `${prettyItemName(itemId)} ${atk}/${hp}, Lvl ${slot.level ?? 1}`;
-    return [
-      `<div class="card team-card is-readonly${enemyCls}" title="${tip}">`,
-      SLAB_SVG,
-      levelRowHTML(slot.level ?? 1, slot.exp ?? 0),
-      spriteHTML('pet', itemId, enemy ? 'enemy' : 'own'),
-      petStatsHTML(atk, hp),
-      equipmentHTML(slot),
-      '</div>',
-    ].join('');
+    return readOnlyBoardCardHTML(slot, side);
   }
 
   /* `side` is required at every call site rather than defaulted, because the
      wrong side is a silent bug: the board still renders, it just faces the
      wrong way. Anything that is not `SIDE_AI` is drawn as the human's own. */
   function renderBoard(el, team, side) {
-    if (!el) return 0;
-    const enemy = side === SIDE_AI;
-    const slots = Array.isArray(team) ? team.slice() : [];
-    // Where the front rank stands. The human's board matches the shop scene's
-    // own lane: slot 0 on the RIGHT, facing right. The enemy is the mirror of
-    // that -- slot 0 on the LEFT, facing left -- so the two front ranks meet
-    // in the middle, which is how the real client draws a battle.
-    slots.sort((a, b) => ((a.slot_index ?? 0) - (b.slot_index ?? 0)) * (enemy ? 1 : -1));
-    el.innerHTML = slots.map((slot) => boardCardHTML(slot, side)).join('');
-    if (el.dataset) el.dataset.side = enemy ? SIDE_AI : SIDE_HUMAN;
-    return slots.filter((s) => s && s.pet_id).length;
+    return renderReadOnlyBoard(el, team, side);
   }
 
   /* Did this turn's battle actually RESOLVE?
@@ -359,23 +224,7 @@
   }
 
   /* ----------------------------------------------------------------- badge */
-  /* WHAT THE BADGE SAYS WHILE End turn IS IN FLIGHT (rewritten 2026-08-06,
-     from Ruihan playing a real game).
 
-     `POST /api/duel/end_turn` does two things in a row: it WAITS for the AI to
-     finish the turn it has been thinking about since the top of the human's
-     turn, and only then resolves the battle. The page used to paint a fixed
-     `resolving the battle…` from the press until the response came back, and
-     the poll hard-overrode the worker's real status with the same constant --
-     so the entire wait, which is the part with something to watch, showed a
-     static line. Measured on one game: 56.4 s of it on turn 1, 37.7 s on turn
-     2, and 0 s on turn 3, where the AI was already done. Turn 3 looking
-     informative and turn 1 looking dead was not two bugs; it was this branch
-     hit two ways.
-
-     So: while the AI is thinking, the badge is the thinking badge, numbers and
-     all. `resolving the battle…` now means the battle, and carries its own
-     clock rather than the AI's stopped one. */
   /* Is this status response worth believing, or was it overtaken?
 
      `pollStatus` fires on a bare `setInterval` with no in-flight guard, against
@@ -618,21 +467,15 @@
     const total = Number(record.n_segments || 0);
     const seconds = (Number(record.elapsed_ms || 0) / 1000).toFixed(1);
     const budget = Number(record.turn_budget_s || 0);
+    const mode = modeName(record.gear);
+    const timing = mode === 'Fixed-all' ? `${seconds}s` : `${seconds}s of ${budget}s`;
     return (
       `turn ${record.turn}: ${searched} searched, ${deadline} deadline-end `
-      + `of ${total} segments · ${seconds}s of ${budget}s`
+      + `of ${total} segments · ${mode} · ${timing}`
     );
   }
 
-  /* exp16 A3's deepening, summed over the game.
 
-     Game totals rather than the last turn's, because the question the human is
-     asking of this line is "is the deepening on, and is it doing anything",
-     and one turn's `decided` is often 0 on a small board. `decided` is the
-     DENOMINATOR the worker already built per turn: imagined samples that had
-     more than one completion to choose between. Under `bc_greedy` it is 0 by
-     construction, which is the honest reading -- nothing was decided, rather
-     than everything agreeing. */
   function deepenTotals(turns) {
     let decided = 0;
     let divergent = 0;
@@ -646,8 +489,8 @@
   function deepenLineText(duel, totals) {
     const agent = (duel && duel.agent) || {};
     const policy = agent.completion_policy ? String(agent.completion_policy) : '';
-    if (!policy) return 'deepening: unknown';
-    const head = `deepening: ${policy} x${Number(agent.completion_width || 0)}`;
+    if (!policy) return 'continuations: no search yet';
+    const head = `continuations: w=${Number(agent.completion_width || 0)}`;
     if (!totals.decided) return `${head} \u00b7 no completion choice yet`;
     const pct = Math.round((totals.divergent / totals.decided) * 100);
     return `${head} \u00b7 V took the non-greedy completion `
@@ -661,11 +504,7 @@
       el.innerHTML = '<span class="tiny">No turn has resolved yet.</span>';
       return;
     }
-    // The cell wording lives in `search_telemetry.js`, shared with /replays,
-    // so the two pages cannot start disagreeing about what these counts mean.
-    // The markup stays here: this table carries `data-` attributes the browser
-    // gate reads back against the server's own record, and the replay page's
-    // does not.
+
     const telemetry = window.__SAP_SEARCH_TELEMETRY;
     const rows = turns.slice().reverse().map((t) => {
       const cells = telemetry.turnRowCells(t);
@@ -814,21 +653,7 @@
   }
   window.__SAP_AFTER_RENDER = renderDuel;
 
-  /* ------------------------------------ what the AI thinks of your board ----
-     exp16 show-value. Three things happen here and only one of them is hard:
 
-     1. the LIVE readout, refreshed off the same repaint every shop action
-        already triggers, debounced;
-     2. the PER-ACTION list, on an explicit press because each entry costs a
-        greedy BC completion server-side;
-     3. the per-turn predicted-versus-realised table, which is pure rendering of
-        `duel.value.rows`.
-
-     The hard one is that a number must never appear without the sentence that
-     says what it means. `paintValue` is the ONLY place a number is written, it
-     derives the number from the sentence rather than beside it, and the
-     per-action rows go through the same function. DESIGN_show_value.md section
-     3: the label is part of the feature, not decoration. */
   let valueBusy = false;
   let valueTimer = null;
   let valueEpoch = 0;
@@ -868,7 +693,7 @@
       // why it is gated on the sentence too: a row with nothing painted is not
       // showing a conditional number, it is showing nothing.
       completed: Boolean(meaning) && Boolean(row && row.completed),
-      // Same gate as the number: no sentence, no short form either.
+
       shortMeaning: meaning ? (VALUE_SHORT_MEANINGS[row.meaning_key] || '') : '',
       flags: valueFlags(row, usable),
     };
@@ -1054,13 +879,7 @@
       paintValue({ok: false, error: value.error});
       return;
     }
-    // The probe values THE CURRENT BOARD, so it is worth re-running exactly
-    // when the board has moved. This function runs on every repaint, and the
-    // status poll repaints, so an unconditional refresh here meant a probe
-    // every second of a turn nobody was touching: 19 to 27 `POST
-    // /api/infer/value` a minute in minutes with zero human actions
-    // (2026-08-13 `dev.log`). Cheap on the server at ~13 ms, but each one is a
-    // request the human's own click then queues behind.
+
     const key = valueBoardKey();
     if (key !== null && key === valueBoardSeen) return;
     valueBoardSeen = key;
@@ -1189,10 +1008,7 @@
     return status === 'thinking' || status === 'resolving';
   }
 
-  /* Reinstall the interval only when the cadence really changes, so the usual
-     poll costs no timer churn. Keeping `setInterval` as the tick source is
-     deliberate: it is the seam `test_exp16_duel_badge.py` captures the poll
-     through, so the shipped path stays the tested path. */
+
   function installPoll(period) {
     if (pollPeriod === period) return;
     if (pollTimer !== null) clearInterval(pollTimer);
@@ -1288,10 +1104,7 @@
       resolvingSince = null;
       endingTurnNumber = null;
       lastWorker = {status: 'idle'};
-      // F3: the stream is keyed by the bare turn number, so without this a
-      // second game's turn 3 appends to the first game's turn 3 and anything
-      // reading "the first resolving pair of turn 3" reads the PREVIOUS game.
-      // On the two-game gate run that was 7 of the second game's 11 turns.
+
       observations.byTurn = {};
       // Same reason, for the valuation: the panel's per-action list and its
       // headline are about a board that no longer exists once a new game
@@ -1314,10 +1127,7 @@
       paintBadge('idle', lastWorker);
       const curtain = q('ai-curtain-text');
       if (curtain) curtain.textContent = 'Loading the agent and dealing the boards…';
-      // Amendment 6: the two knobs travel WITH the new game, because they are
-      // properties of the game rather than of the process. An empty object is
-      // still valid and means "whatever the server already has", which is what
-      // a reload or an old client sends.
+
       const payload = await post('/api/duel/new_game', settings || {});
       if (payload.state) {
         const duelState = payload.state.duel || {};
@@ -1333,6 +1143,7 @@
       }
       const endBtn = q('btn-end-turn');
       if (endBtn && payload.ok) endBtn.disabled = false;
+      return payload;
     } finally {
       busy = false;
     }
@@ -1360,9 +1171,7 @@
     // Then the badge keeps what it is showing rather than inventing a state.
     const pressStatus = badgeStatusNow(lastWorker) || paintedStatus;
     paintBadge(pressStatus, lastWorker);
-    // Recorded here rather than left to the 250 ms poll: the resolving window
-    // is often shorter than one poll, and what the badge said at the press is
-    // a claim the gate checks.
+
     if (openTurn) {
       const row = observe(openTurn, pressStatus, lanePhase, lastWorker);
       const badgeTextEl = q('ai-badge-text');
@@ -1383,19 +1192,7 @@
       const turns = (duel && Array.isArray(duel.turns) ? duel.turns : []);
       const last = turns.length ? turns[turns.length - 1] : null;
       const resolvedNow = isResolvedTurn(last);
-      // THE RESPONSE IS THE AUTHORITATIVE TRANSITION, not a lucky poll.
-      //
-      // Everything between the AI handing its turn over and this response is
-      // server-side (`end_turn`: await_turn -> battle -> bump_generation ->
-      // archive sync -> `_submit_ai_turn`), and it is regularly shorter than
-      // one 250 ms poll. When no poll landed in it, the old code left
-      // `resolvingSince` null and the turn simply never had a resolving phase:
-      // 1 of 33 turns across the two saved gate runs, worst on turn 1 where the
-      // archive document is smallest. A response that carries a resolved turn
-      // is proof the battle happened, so the state machine closes here instead
-      // of hoping. The worker in the observation is named `handover` rather
-      // than whatever the AI is doing now, because the transition came from the
-      // response and not from a status sample.
+
       if (resolvedNow && resolvingSince === null) {
         resolvingSince = now();
         noteHandover('response', HANDOVER_SAMPLE);
@@ -1432,52 +1229,35 @@
   window.__SAP_END_TURN = endTurn;
 
   /* ------------------------------------------------------- settings card */
-  /* exp16 Amendment 6. Both knobs are set here, once, before a game, and the
-     duel bar only reads them back. The alternative -- changing them mid-game,
-     which is what the bar used to allow for the clock -- cannot be filed:
-     `ai_version` records ONE setting per game, so a game that changed its own
-     would be archived under a number half of it never ran. */
 
-  function deepenText(gear) {
-    const width = Number((gear || {}).deepen_width || 0);
-    return width >= 2 ? `${width}` : 'off';
+
+  function modeName(mode) {
+    return window.__SAP_SEARCH_TELEMETRY.modeLabel(mode);
   }
 
   function paintGearReadout(gear) {
+    const current = gear || {};
+    const mode = current.gear || 'grow-k';
+    const fixed = mode === 'fixed-all' || mode === 'measured';
     const clock = q('duel-clock-readout');
-    if (clock) clock.textContent = String(Number((gear || {}).turn_budget_s || 0));
+    if (clock) clock.textContent = String(current.turn_budget_s || 105);
+    const time = q('duel-time-readout');
+    if (time) time.hidden = fixed;
+    const label = q('duel-mode-readout');
+    if (label) label.textContent = modeName(mode);
     const deepen = q('duel-deepen-readout');
-    if (deepen) deepen.textContent = deepenText(gear);
-    const widthOut = q('duel-width-readout');
-    if (widthOut) {
-      const g = String((gear || {}).gear || '');
-      const w = Number((gear || {}).width || 0);
-      const k = (gear || {}).stochastic_samples;
-      const initial = k === undefined || k === null ? 'not recorded' : String(k);
-      if (g === 'resample-clock') widthOut.textContent = `root ${w}, grow k from ${initial}`;
-      else if (g === 'measured') widthOut.textContent = `fixed root ${w}, k ${initial}`;
-      else widthOut.textContent = 'laboratory: grow root width';
-    }
+    if (deepen) deepen.textContent = String(current.completion_width || 4);
+    const width = q('duel-width-readout');
+    if (width) width.textContent = String(current.width || 72);
   }
 
-  /* Gears that PIN the outer width, so the width input applies to them.
-     W11a had only `measured`; W11b's `resample-clock` pins it the same way and
-     spends the remainder on k instead. Under `full-clock` the number is
-     generated until the slice ends and the input would be a control that does
-     nothing. Dimming beats hiding: the value is still visible, so switching
-     gears does not look like it lost a setting. */
-  const PINNED_WIDTH_GEARS = ['measured', 'resample-clock'];
-  /* Mirrors `ai_worker.MAX_SETTABLE_SEARCH_WIDTH` and the input's own `max`. */
-  const MAX_SEARCH_WIDTH = 4096;
-
   function syncWidthRow() {
-    const row = q('setup-width-row');
-    const gearSel = q('setup-gear');
-    if (!row || !gearSel) return;
-    const on = PINNED_WIDTH_GEARS.indexOf(String(gearSel.value)) >= 0;
-    row.style.opacity = on ? '1' : '0.45';
-    const width = q('setup-width');
-    if (width) width.disabled = !on;
+    const row = q('setup-budget-row');
+    const select = q('setup-gear');
+    const input = q('setup-budget');
+    const grow = select && select.value === 'grow-k';
+    if (row) row.hidden = !grow;
+    if (input) input.disabled = !grow;
   }
 
   function setupError(message) {
@@ -1490,21 +1270,13 @@
   function openSetup(source) {
     const overlay = q('duel-setup');
     if (!overlay) return;
-    // `source` is the status payload at boot, when the page has no app state
-    // yet. Falling back to the HTML defaults instead would be the quiet
-    // version of the bug this card exists to remove: a server launched with
-    // DEEPEN=8 would offer 0, and Start would turn deepening off without ever
-    // saying so.
+    // Read the selected mode and clock; root, w and initial k are fixed presets.
     const duel = source || duelBlock() || {};
     const gear = duel.gear || {};
-    const deepen = q('setup-deepen');
-    if (deepen) deepen.value = String(Number(gear.deepen_width || 0));
     const budget = q('setup-budget');
     if (budget && gear.turn_budget_s) budget.value = String(Number(gear.turn_budget_s));
     const gearSel = q('setup-gear');
-    if (gearSel && gear.gear) gearSel.value = String(gear.gear);
-    const width = q('setup-width');
-    if (width && gear.width) width.value = String(Number(gear.width));
+    if (gearSel) gearSel.value = ['fixed-all', 'measured'].includes(gear.gear) ? 'fixed-all' : 'grow-k';
     syncWidthRow();
     // Cancel exists only when there is a game to go back TO. On arrival at
     // /play with nothing running, a card you can dismiss leaves the human on
@@ -1513,7 +1285,7 @@
     if (cancel) cancel.hidden = !Number(duel.game_generation);
     setupError(null);
     overlay.hidden = false;
-    if (deepen) deepen.focus();
+    if (gearSel) gearSel.focus();
   }
 
   function closeSetup() {
@@ -1522,45 +1294,24 @@
   }
 
   async function startFromSetup() {
-    const deepen = q('setup-deepen');
-    const budget = q('setup-budget');
-    const gearSel = q('setup-gear');
-    const widthEl = q('setup-width');
-    const width = deepen ? Number(deepen.value) : NaN;
-    const seconds = budget ? Number(budget.value) : NaN;
-    const gearValue = gearSel ? String(gearSel.value) : null;
-    const searchWidth = widthEl ? Number(widthEl.value) : NaN;
-    // Refused here rather than sent, because `Number("abc")` is NaN and JSON
-    // carries it as null, which the server cannot tell apart from "not sent".
-    if (!Number.isFinite(width) || width < 0 || !Number.isInteger(width)) {
-      setupError('Deepening width has to be a whole number, 0 or more. 0 turns it off.');
+    const gear = q('setup-gear').value;
+    const seconds = Number(q('setup-budget').value);
+    if (!['grow-k', 'fixed-all'].includes(gear)) {
+      setupError('Choose Grow k or Fixed-all.');
       return;
     }
-    if (!Number.isFinite(seconds) || seconds <= 0) {
-      setupError('The AI turn clock has to be a positive number of seconds.');
-      return;
-    }
-    if (PINNED_WIDTH_GEARS.indexOf(String(gearValue)) >= 0
-        && (!Number.isFinite(searchWidth) || searchWidth < 1
-            || !Number.isInteger(searchWidth) || searchWidth > MAX_SEARCH_WIDTH)) {
-      /* The ceiling matters as much as the floor under a pinned-width gear:
-         the clock waits for the width, so an unbounded width is an unbounded
-         turn. Same number as the input's `max` and as the server's own limit. */
-      setupError(`Chains per segment has to be a whole number between 1 and ${MAX_SEARCH_WIDTH}.`);
+    if (gear === 'grow-k' && (!Number.isFinite(seconds) || seconds < 1 || seconds > 600)) {
+      setupError('AI turn time must be between 1 and 600 seconds.');
       return;
     }
     setupError(null);
     closeSetup();
-    const settings = {deepen_width: width, turn_budget_s: seconds};
-    if (gearValue) settings.gear = gearValue;
-    // Only sent under a gear that uses it, so a stale number left in the box
-    // under `full-clock` cannot quietly become next game's width.
-    if (PINNED_WIDTH_GEARS.indexOf(String(gearValue)) >= 0) settings.search_width = searchWidth;
-    await newGame(settings);
-    const payloadOk = Number((duelBlock() || {}).game_generation) > 0;
-    if (!payloadOk) {
+    const settings = {gear};
+    if (gear === 'grow-k') settings.turn_budget_s = seconds;
+    const payload = await newGame(settings);
+    if (!payload || !payload.ok) {
       openSetup();
-      setupError('The server refused those settings, so nothing was started.');
+      setupError((payload && payload.error) || 'The server refused those settings, so nothing was started.');
     }
   }
 
@@ -1588,10 +1339,7 @@
     bootSetup();
   }
 
-  /* Arriving at /play opens the settings card instead of dealing a game.
-     Until Amendment 6 this called `newGame()` directly, which had a second
-     effect nobody asked for: a reload silently threw away the game in
-     progress. Now the card offers to keep it. */
+
   async function bootSetup() {
     let status = null;
     try {
@@ -1606,18 +1354,7 @@
     openSetup(status);
   }
 
-  /* The fourth seam, alongside `__SAP_DUEL_OBS`, `__SAP_END_TURN` and
-     `__SAP_AFTER_RENDER`: the board renderer and the lane's one transition
-     function, so `test_exp16_duel_board.py` can check the two sides and the
-     three states in node against THIS file, without a browser.
 
-     The badge deliberately has NO seam of its own: `test_exp16_duel_badge.py`
-     drives it through `window.__SAP_END_TURN` and the same poll the page
-     installs with `setInterval`, so it exercises the shipped path rather
-     than a testing entry point beside it. (The cadence that `setInterval` is
-     given now depends on whether the AI's clock is running -- see
-     `POLL_ACTIVE_MS` -- but the seam is unchanged: it is still the function
-     handed to `setInterval`.) */
   window.__SAP_DUEL_INTERNALS = {
     renderBoard,
     boardCardHTML,
@@ -1632,7 +1369,7 @@
     deepenTotals,
     deepenLineText,
     searchLineText,
-    deepenText,
+    modeName,
     openSetup,
     startFromSetup,
     markImageUnavailable,
@@ -1643,9 +1380,7 @@
     seenTurn: () => laneTurn,
   };
 
-  /* exp16 show-value's seam. `valueText` is the derivation the whole panel goes
-     through -- headline and every per-action row -- so a node probe that drives
-     THIS function is driving what the page paints, not a copy of it. */
+
   window.__SAP_DUEL_VALUE_INTERNALS = {
     valueText,
     valueFlags,

@@ -15,13 +15,8 @@ from typing import Any
 
 from ..constants import ROOT
 
-REPLAY_BOT_DIR = ROOT.parent / "SAP-Replay-Bot" / "sap-replay-bot"
-if not REPLAY_BOT_DIR.exists():
-    # e.g. sap_ppo imported from a git worktree outside SAP-Workspace: fall
-    # back to the canonical workspace checkout (CLAUDE.md layout).
-    _override = os.environ.get("SAP_REPLAY_BOT_DIR", "").strip()
-    if _override and Path(_override).exists():
-        REPLAY_BOT_DIR = Path(_override)
+REPLAY_BOT_DIR = Path(os.environ.get("SAP_REPLAY_BOT_DIR") or ROOT / "third_party" / "sap-replay-bot")
+RENDER_RUNTIME = ROOT / "tools" / "replay_renderer" / "node_modules"
 REPLAY_BOT_RENDER = REPLAY_BOT_DIR / "lib" / "render.js"
 REPLAY_BOT_BATTLE = REPLAY_BOT_DIR / "lib" / "battle.js"
 REPLAY_BOT_DATA = REPLAY_BOT_DIR / "lib" / "data.js"
@@ -41,7 +36,7 @@ def _ensure_paths() -> str | None:
     ]
     for path in required:
         if not path.exists():
-            return f"missing_path:{path}"
+            return f"missing_path:{path}; run python tools/setup_renderer.py"
     return None
 
 
@@ -58,6 +53,12 @@ def _render_timeout_seconds() -> float:
 
 def _stop_process_group(proc: subprocess.Popen[str]) -> None:
     """Stop the node bridge and any child it may have spawned."""
+    if os.name == "nt":
+        # The Canvas bridge does not start child processes on Windows.
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=1.0)
+        return
     try:
         os.killpg(proc.pid, signal.SIGTERM)
     except ProcessLookupError:
@@ -96,6 +97,8 @@ def _run_render(
 
     proc: subprocess.Popen[str] | None = None
     try:
+        env = os.environ.copy()
+        env["NODE_PATH"] = os.pathsep.join(filter(None, (str(RENDER_RUNTIME), env.get("NODE_PATH"))))
         proc = subprocess.Popen(
             [
                 "node",
@@ -110,7 +113,10 @@ def _run_render(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            start_new_session=True,
+            encoding="utf-8",
+            env=env,
+            start_new_session=(os.name != "nt"),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         deadline = time.monotonic() + _render_timeout_seconds()
         while True:
@@ -180,9 +186,19 @@ def render_replay_image_from_raw_battles(
     header_opponent_name: str | None = None,
 ) -> dict[str, Any]:
     """Render replay image from raw replay battle JSON objects using replay-bot."""
+    # Public pool records omit player identities. The original replay-bot
+    # parser requires Opponent.DisplayName even though it is not board data.
+    # Supply a generic label only in the render payload, without mutating the
+    # source battle or restoring any identifying information.
+    render_battles = []
+    for battle in battles:
+        opponent = battle.get("Opponent")
+        opponent = dict(opponent) if isinstance(opponent, dict) else {}
+        opponent["DisplayName"] = opponent.get("DisplayName") or "Opponent"
+        render_battles.append({**battle, "Opponent": opponent})
     payload = {
         "mode": "battle_json",
-        "battles": battles,
+        "battles": render_battles,
         "maxLives": int(max_lives),
         "playerName": player_name,
         "headerOpponentName": header_opponent_name,

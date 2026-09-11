@@ -1,0 +1,8 @@
+{
+  "name": "sap-arena-replay-renderer-runtime",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "canvas": "3.1.2"
+  }
+}

@@ -1,6 +1,4 @@
-"""exp19 PLAN_W1 §1 step 6: the four-condition Cat trigger opportunity counter.
-
-WHY A DIVERGENCE COUNT IS NOT ENOUGH.  The Cat fix stops a stats-free food
+"""WHY A DIVERGENCE COUNT IS NOT ENOUGH.  The Cat fix stops a stats-free food
 from consuming one of Cat's two purchase-food triggers.  Whether that changed
 any play is answered by the drift check -- but a drift check that reports zero
 divergences is ambiguous: either the fix genuinely changes nothing the agent
@@ -36,19 +34,7 @@ with it.
 
 The unit is a (food purchase, Cat) pair, because the trigger budget is
 per-Cat: a board with two Cats offers two triggers to spend and two to
-preserve.
-
-WHICH "OLD RULE" THIS COUNTS AGAINST, and it moved once already.  The old rule
-is "every food purchase burns a trigger", and the new rule is "only a purchase
-whose pending food carries non-zero stats does".  Membership of that second set
-is read through `_food_effect_stats`, so it follows `FOOD_STAT_BUFFS` and is
-not a list here.  On 2026-08-13 canned food was priced in that table (it grants
-+1/+1 to the shop pets, and Ruihan ruled that Cat multiplies it), so canned
-food LEFT the stats-free set and now burns a trigger under both rules.  Two
-consequences for anyone reading a row: this counter no longer counts canned
-purchases as preserved triggers, and a row produced before that date is
-counting against a different stats table than a row produced after it.
-"""
+preserve."""
 
 from __future__ import annotations
 

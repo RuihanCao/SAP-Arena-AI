@@ -41,17 +41,7 @@ from .compose import apply_group, compose_actions
 # object could never reach.
 from .. import play_web as _play_web_pkg  # noqa: E402
 
-# The two things this server can be. They are not two skins of one page: they
-# answer to two different readers.
-#
-#   SURFACE_HUMAN  -- Ruihan playing. Convenience gestures are welcome, and
-#                     the duel at /play is the point.
-#   SURFACE_AGENT  -- the AGENT's environment, made visible. Whatever this
-#                     surface lets you do IS a claim about what the agent can
-#                     do, so it offers exactly `constants.ACTION_TYPES` and
-#                     nothing composed on top. A gesture the agent does not
-#                     have makes the page misrepresent the environment, which
-#                     is the one thing this surface exists not to do.
+
 SURFACE_HUMAN = "human"
 SURFACE_AGENT = "agent"
 SURFACES = (SURFACE_HUMAN, SURFACE_AGENT)
@@ -107,8 +97,8 @@ def catalog_debug_items(catalog: dict[str, Any], slot_type: str) -> list[dict[st
             continue
         for item_id in ids:
             row: dict[str, Any] = {"item_id": str(item_id), "tier": tier}
-            # exp14: the skin's selection card shows what a pet does, in the
-            # pinned pack's own words. Read-only, additive, no semantics.
+
+
             ability = ability_by_name.get(str(id_to_name.get(str(item_id), "")))
             if ability:
                 row["ability"] = ability
@@ -127,16 +117,7 @@ def _canonical_bytes(value: Any) -> bytes:
 
 
 def catalog_document(catalog: dict[str, Any]) -> dict[str, Any]:
-    """The half of the snapshot that cannot change while a server is running.
-
-    `catalog_base_stats` and `debug_catalog` are read out of the pinned Turtle
-    pack at construction and never written again, yet until 2026-08-09 both
-    were rebuilt and re-sent inside EVERY snapshot: 18.8 KB per shop click,
-    35% of a `/api/state` response on the agent surface and 63% of one on the
-    duel surface. They are served from `/api/catalog` instead, addressed by
-    content (`catalog_url`) so the browser can cache them the way it already
-    caches `/api/image`.
-    """
+    """The half of the snapshot that cannot change while a server is running."""
     return {
         "catalog_base_stats": catalog.get("pets", {}).get("base_stats", {}),
         "debug_catalog": {
@@ -215,13 +196,6 @@ def history_precondition_error(
 ) -> str | None:
     """Why this mutating request must NOT be applied, or None to go ahead.
 
-    THE DEFECT (Ruihan, 2026-08-19): "我买 food 的时候经常就卡, 然后我点两遍,
-    等第一个买 food 处理完了, 直接就给我买了俩 food". Two clicks are two POSTs,
-    both are legal when they arrive, and the second one spends the gold again.
-    `app.js` already refused to RETRY a lost request for exactly this reason --
-    "a buy or a roll is not idempotent, and a retry after a lost reply spends
-    the gold twice" -- so only the automatic retry was ever guarded.
-
     The page's own in-flight guard closes the common case. It cannot close a
     reload, a reconnect or a second tab, because those are two clients, so the
     server needs its own answer. It already has the state code to do it with:
@@ -231,17 +205,8 @@ def history_precondition_error(
     it was decided on, and a second click issued before the first reply landed
     necessarily names the pre-click board.
 
-    Three cases, and the middle one is the one that is easy to get wrong:
-
-      absent      -- no precondition, applied as before. `curl`, the exp16
-                     gates and every older client send nothing, and they must
-                     keep working.
-      unreadable  -- REFUSED, not waved through. A predicate that reads a
-                     missing or malformed input as PASSED is this repo's
-                     signature defect; here it would silently return the
-                     double-buy the moment a client sent the wrong type.
-      mismatched  -- REFUSED. The board moved between the decision and the
-                     request.
+    Missing preconditions are allowed for API clients. Malformed or mismatched
+    preconditions reject the operation without changing the board.
     """
     if not isinstance(payload, dict):
         return None
@@ -284,11 +249,11 @@ class App:
         replay_cache: Path | None = None,
         surface: str = DEFAULT_SURFACE,
     ):
-        # Call-time import: the tempo planner is an experiment-line diagnostic that the public release does not ship. Same for the replay viewer.
+
         try:
             from ...tempo.planner import TempoPlannerConfig
         except ImportError:
-            # Experiment-line diagnostic, not part of the public release.
+
             TempoPlannerConfig = None
         # The viewer is optional. Its absence disables one page rather than
         # preventing the server from starting.
@@ -309,8 +274,8 @@ class App:
         # `legal_actions` enumerates.
         self.compose_enabled = surface != SURFACE_AGENT
         self.fixture_path = fixture_path
-        # exp09 W2 replay player: construction is cheap, all heavy work
-        # (cache scan, compile) happens on first /api/replay/* use
+
+
         self.replay_session = None if ReplayPlayerSession is None else ReplayPlayerSession(
             Path(replay_cache) if replay_cache is not None else DEFAULT_REPLAY_CACHE
         )
@@ -351,9 +316,8 @@ class App:
             predictor_top_k=int(max(1, planner_predictor_top_k)),
         )
         if TempoPlannerConfig is None:
-            # A stand-in with the same fields: several telemetry paths read
-            # `.predictor_top_k` and friends regardless of whether the planner
-            # itself is available, and only the planner path needs the real type.
+
+
             from types import SimpleNamespace
 
             self.tempo_planner_config = SimpleNamespace(**planner_fields)
@@ -398,9 +362,8 @@ class App:
         return parsed_pets_to_team([None, None, None, None, None])
 
     def _load_predictor_artifact(self, path: Path | None) -> dict[str, Any] | None:
-        # No artifact means no import: the tempo planner is an experiment-line
-        # diagnostic the public release does not ship, and importing it before
-        # checking the path made a missing OPTIONAL feature a fatal startup error.
+
+
         if path is None or not Path(path).exists():
             return None
         try:
@@ -497,7 +460,7 @@ class App:
         for idx in range(5):
             slot = slots[idx] if idx < len(slots) and isinstance(slots[idx], dict) else {}
             normalized.append(copy.deepcopy(slot))
-        # Replay image calc_rows expects opposite orientation from planner/team slots.
+
         return list(reversed(team_to_pet_configs(normalized)))
 
     @staticmethod
@@ -892,7 +855,7 @@ class App:
             rendered = _play_web_pkg.render_replay_image_from_calc_rows(
                 rows,
                 max_lives=6,
-                player_name="SAP_PPO",
+                player_name="Player",
                 header_opponent_name="Sampled Opponent",
             )
             if not rendered.get("ok"):
@@ -908,7 +871,7 @@ class App:
             rendered = _play_web_pkg.render_replay_image_from_calc_rows(
                 [row],
                 max_lives=6,
-                player_name="SAP_PPO",
+                player_name="Player",
                 header_opponent_name="Predicted Opponent (Start)",
             )
             if not rendered.get("ok"):
@@ -924,7 +887,7 @@ class App:
             rendered = _play_web_pkg.render_replay_image_from_calc_rows(
                 [row],
                 max_lives=6,
-                player_name="SAP_PPO",
+                player_name="Player",
                 header_opponent_name="Predicted Opponent (End)",
             )
             if not rendered.get("ok"):
@@ -951,8 +914,7 @@ class App:
         return tr, group_id
 
     def _next_group_id(self) -> str:
-        """Monotonic and process-independent, so a replayed session gets the
-        same ids as the session that produced it (W6 archives them)."""
+        """Next group id."""
         self.session.group_seq = int(self.session.group_seq) + 1
         return f"grp-{self.session.group_seq}"
 
@@ -1010,13 +972,7 @@ class App:
         return self._snapshot()
 
     def _history_group_ids(self) -> list[str | None]:
-        """`history_group_ids` padded to the history length.
-
-        A session restored from an older snapshot (or built by a test that
-        appends to `history` directly) has no group list; treating the
-        missing tail as "not grouped" degrades to the pre-W4 behaviour
-        instead of raising.
-        """
+        """`history_group_ids` padded to the history length."""
         ids = list(self.session.history_group_ids)
         if len(ids) < len(self.session.history):
             ids = [None] * (len(self.session.history) - len(ids)) + ids
@@ -1322,7 +1278,7 @@ class App:
         return None
 
     def recommend(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-        # Call-time import: the tempo planner is an experiment-line diagnostic that the public release does not ship.
+
         from ...tempo.planner import recommend_next_action, resolve_opponent_candidates
 
         encountered_errors: list[str] = []

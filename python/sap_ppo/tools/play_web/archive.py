@@ -1,4 +1,4 @@
-"""Durable per-turn archives for exp16 human-vs-AI games."""
+"""Archive."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from typing import Any
 
 from PIL import Image
 from .agent_identity import normalize_ai_version
+from .public_settings import public_mode
 from .replay_view import is_completed_game
 
 
@@ -33,6 +34,10 @@ def _utc_now() -> str:
 
 def _fsync_dir(path: Path) -> None:
     """Persist directory entries created or replaced below ``path``."""
+    # Windows cannot open a directory through os.open for fsync. File fsync
+    # and atomic replacement still apply; directory-entry syncing is POSIX-only.
+    if os.name == "nt":
+        return
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     dir_fd = os.open(path, flags)
     try:
@@ -140,15 +145,12 @@ class DuelArchive:
             "model_revision": ai.get("model_revision"),
             "search_revision": ai.get("search_revision"),
             "baseline_id": ai.get("baseline_id"),
-            # Amendment 6. The setting is per GAME now, so the list has to be
-            # able to tell two games apart without opening both. Absent on
-            # everything archived before 2026-08-19, and absent is rendered as
-            # "not recorded" rather than as "off".
+
+
             "completion_policy": ai.get("completion_policy"),
             "completion_width": ai.get("completion_width"),
-            # W11b, same rule: absent on anything archived before the gear was
-            # a per-game setting, and the list renders absent as nothing at all
-            # rather than as the process default.
+
+
             "gear": (game.get("gear_start") or {}).get("gear"),
             "gear_width": (game.get("gear_start") or {}).get("width"),
             "game_seed": (game.get("seeds") or {}).get("game"),
@@ -202,6 +204,10 @@ class DuelArchive:
                 "winner": None,
                 "end_reason": None,
             }
+            if isinstance(game.get("gear_start"), dict):
+                start = game["gear_start"]
+                if isinstance(start.get("gear"), str):
+                    start["gear"] = public_mode(start["gear"])
             game_dir = self._game_dir(game_id)
             game_dir.mkdir(parents=True, exist_ok=False)
             # Make the unique games/<id> directory entry durable before
@@ -227,6 +233,8 @@ class DuelArchive:
             turn = int(record["turn"])
             turns = list(game.get("turns") or [])
             replacement = copy.deepcopy(record)
+            if isinstance(replacement.get("gear"), str):
+                replacement["gear"] = public_mode(replacement["gear"])
             if render_job is not None:
                 replacement["render_job"] = copy.deepcopy(render_job)
             for i, existing in enumerate(turns):
@@ -319,12 +327,7 @@ class DuelArchive:
         *,
         calculator_link: str | None,
     ) -> bool:
-        """Attach a valid deterministic PNG left before metadata commit.
-
-        record_render commits bytes before game.json metadata. A process death
-        in that narrow window must reuse the already-durable W6a bytes rather
-        than require replay-bot to be available after restart.
-        """
+        """Attach a valid deterministic PNG left before metadata commit."""
         name = f"turn-{int(turn):03d}.png"
         path = self._game_dir(game_id) / name
         try:

@@ -28,8 +28,6 @@ NON_TURTLE_PACK_PETS: dict[str, str] = {
         "Not in the Turtle pack. Its `friend_sold` handler is the ONLY handler "
         "for that trigger in the whole registry, and a SELL step emits exactly "
         "one `sell` event, so no in-catalog SELL step can tie or draw at all. "
-        "exp13 W1a-3 had three A4 tie tests standing on two Shrimps before that "
-        "was noticed; see `tests/test_exp13_structural_cut.py` section 13."
     ),
 }
 

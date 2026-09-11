@@ -1,21 +1,4 @@
-"""The ONE isotonic fit exp13 W1 uses, and the one evaluator it serialises to.
-
-WHY THIS MODULE EXISTS. `RESULTS_probes.md` red flag 13: the probe branch was
-cut off `main` while the W1b readout branch was unmerged, so the same
-pool-adjacent-violators fit, the same knot interpolation and the same
-return-to-go definition were written twice -- in `w1_readouts.py` and in
-`w1_recalibration_weights.py`. The flag said one copy should go once the
-branches merged. They have merged (`main` @ `64af0cc`), so this is that one
-copy, and both former sites now import it.
-
-The definitions are unchanged, deliberately and to the last bit. Readout 1's
-published curve is the artifact every later number is compared against, so a
-consolidation that moved any value would silently invalidate probe 2's
-reproduction gate. `test_w1_recalibration_curve.py` pins the eleven fitted
-deciles readout 1 published against this implementation, and the exactness is
-the point: the tolerance is 0.0, not 1e-12.
-
-WHAT IS NEW HERE AND WHY. `isotonic()` used to be reachable only as a closure
+"""WHAT IS NEW HERE AND WHY. `isotonic()` used to be reachable only as a closure
 over the fit's 33,612 points, which cannot be written to a file. A curve that
 lives only inside the process that fitted it cannot be frozen, hashed or
 pinned in a manifest, so a label run would have to refit from whatever data it
@@ -27,8 +10,7 @@ Splitting the fit from the evaluator is what makes the curve an artifact:
     interpolator(...)    -> Callable[[float], float]   the evaluator, anywhere
 
 `isotonic(xs, ys)` is still exactly `interpolator(*fit_isotonic(xs, ys))`, so
-every existing caller keeps its meaning.
-"""
+every existing caller keeps its meaning."""
 
 from __future__ import annotations
 
@@ -38,7 +20,7 @@ from typing import Callable
 def fit_isotonic(xs: list[float], ys: list[float]) -> tuple[list[float], list[float]]:
     """Pool-adjacent-violators isotonic regression, as knots.
 
-    Monotone by construction, fitted from V0 score to realised subsequent
+    Monotone by construction, fitted from value scores to realised subsequent
     trophies, nothing else assumed about its shape. Returns the sorted x and
     the fitted y at each of them, which is the full uncompressed curve.
     """
@@ -98,22 +80,7 @@ def interpolator(
 def compress_knots(
     x_knots: list[float], y_knots: list[float]
 ) -> tuple[list[float], list[float]]:
-    """Drop the knots `interpolator` cannot distinguish. Exactly, not nearly.
-
-    A PAVA fit is a step function: on the canonical W1 curve 33,612 fitted
-    points collapse to 165 knots. Inside a block, interpolating between the block's
-    first and last x gives the same constant every interior knot would have
-    given, and at a block boundary the two neighbouring knots are both kept,
-    so the linear segment between blocks is the same segment. Keeping the
-    first and last knot of each run is therefore not an approximation -- it is
-    the same function with the redundant knots removed, which is what makes a
-    small artifact possible instead of a 1.4 MB one.
-
-    Exactness is not argued from this docstring: the fit and its compression
-    are checked against each other on every point of the real fit by
-    an internal analysis script, and on the committed
-    curve by the unit tests.
-    """
+    """Drop the knots `interpolator` cannot distinguish. Exactly, not nearly."""
     n = len(x_knots)
     if n != len(y_knots):
         raise ValueError("knot arrays must have equal length")
@@ -131,9 +98,5 @@ def compress_knots(
 
 
 def isotonic(xs: list[float], ys: list[float]) -> Callable[[float], float]:
-    """Fit and return the curve as a callable. The pre-consolidation signature.
-
-    `w1_readouts.py` and `w1_recalibration_weights.py` both import this name;
-    it is byte-for-byte the behaviour each of them used to define locally.
-    """
+    """Fit and return the curve as a callable. The pre-consolidation signature."""
     return interpolator(*fit_isotonic(xs, ys))

@@ -1,19 +1,7 @@
 """Reconstruct a SAP Versus shop from a server seed (replay `Response.Data.Seed`).
 
-Cracked 2026-07-08 (exp02 shop-seed-crack); moved here from
-internal project notes in T7 code convergence (2026-07-10). Full
-logic in internal project notesghidra/INDEX.md:
-    playerSeed = DotNetRandom(serverSeed).Next(int.MaxValue)
-    rng        = DotNetRandom(playerSeed)
-    pets  = [ minion_pool[tier][ rng.Next(0, 10*tier) ] for each pet slot ]   # with replacement
-    rng.NextDouble()                                                          # Sloth check (1 draw)
-      -> if < 1e-4: pets[0] = Sloth (MinionEnum 71)
-    foods = [ food_pool[tier][ rng.Next(0, foodN[tier]) ] for each food slot ]
-    shop  = [frozen] + [drawn]
-
 Held-out validation: tier1-3 pets ~98%, foods ~93-96%. Pools in pools.json.
-Use verify()/reconstruct_verified() to keep only rolls that reproduce exactly (zero contamination).
-"""
+Use verify()/reconstruct_verified() to keep only rolls that reproduce exactly (zero contamination)."""
 from __future__ import annotations
 import json
 from collections import Counter
@@ -108,7 +96,7 @@ def reconstruct_shop(server_seed: int, turn: int, *, n_pets=None, n_foods=None,
 
 
 def verify(server_seed, turn, actual_pets, actual_foods, *, frozen_pets=(), frozen_foods=()) -> bool:
-    """True iff the reconstruction reproduces the observed shop exactly (safety-net gate)."""
+    """Verify."""
     r = reconstruct_shop(server_seed, turn,
                          n_pets=len(actual_pets), n_foods=len(actual_foods),
                          frozen_pets=frozen_pets, frozen_foods=frozen_foods)

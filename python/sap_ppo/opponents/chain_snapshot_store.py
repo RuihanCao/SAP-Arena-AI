@@ -28,27 +28,10 @@ At run time a worker keeps the index (a few MB) and mmaps the blob. All
 workers on the box then share one copy of the blob through the page cache,
 automatically, with no fork and no freeze.
 
-ORDER IS LOAD-BEARING AND IS PRESERVED DELIBERATELY. `sample_random_with_rng`
-does `rng.choice(self.by_turn[turn])`, so the POSITION of a game inside a
-turn's candidate list decides which opponent a given random draw returns.
-`initial_pid_for_game` does `rng.choice(self.all_pids)` for the same reason.
-The index therefore stores games in the order the snapshot listed them and
-turns in the order that game listed them, and the reader replays the original
-build loop over the index rather than over the JSON. Any reordering here would
-silently change every sampled opponent in every run while every gate stayed
-green.
-
 WHAT IS NOT STORED. `_entry_to_payload` reads exactly `battle`, `parsed_state`,
 `_replay_id`, `_opponent_pack` and `_opponent_rank`. The last three are
 game-level and live in the index. Nothing else in an entry is ever read, so
-nothing else is carried.
-
-BOUND TO ITS SOURCE. The index records the sha256 of the JSON it was built
-from, and loading refuses when that does not match the snapshot the caller
-named. The failure this prevents is the one this campaign has already been
-bitten by in another form: an artifact that silently belongs to a different
-input, passing every gate because nothing checked what it was built from.
-"""
+nothing else is carried."""
 
 from __future__ import annotations
 

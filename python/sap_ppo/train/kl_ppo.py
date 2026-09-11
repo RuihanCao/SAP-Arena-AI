@@ -1,48 +1,8 @@
-"""KL-anchored Maskable PPO for exp09 W5 (versus-mode chain PPO).
-
-Implements the piKL / Generals.io-2025 recipe PLAN.md's "W5 reward" section
-froze: standard MaskablePPO, PLUS a `kl_coef * KL(pi_current || pi_BC)` term
-added to the training loss, where `pi_BC` is the FROZEN behavior-cloning
-policy (`flat_v2`) the run was warm-started from, and `kl_coef` DECAYS over
-training (linear from `--kl-coef-init` to `--kl-coef-final` on SB3's
-`_current_progress_remaining`, i.e. init at step 0 -> final at the last
-step). The KL is computed on the SAME masked action distributions the policy
-trains on (`rollout_data.action_masks` from the maskable rollout buffer), so
-anchor and policy always compare over the identical legal-action support.
-
-Why loss-level KL and not a reward bonus: PLAN.md Rev 5 specifies the
-Generals.io / piKL formulation ("add KL(pi||pi_BC) penalty to the LOSS with a
-decaying coefficient"), which regularizes the optimization directly and
-leaves the REWARD purely the versus-lives outcome (`gym_env.py`'s
-`versus_lives` mode) -- reward stays interpretable, the leash lives in the
-loss.
-
-`train()` below is copied VERBATIM from the installed sb3-contrib 2.9.0
+"""`train()` below is copied VERBATIM from the installed sb3-contrib 2.9.0
 `MaskablePPO.train` (checked against `inspect.getsource` on this box) with
 ONE clearly-marked insertion (the KL-to-anchor block) and its logging.
 If sb3-contrib is ever upgraded past 2.9.x, re-diff this copy against the
-new upstream `train()` (see `docs/dependency-pins.md` for the pin policy).
-
-The anchor is deliberately EXCLUDED from checkpoint pickling
-(`_excluded_save_params`): a saved W5 model zip stays loadable by plain
-`MaskablePPO.load` (BcRecommender, eval_ppo, model-pool tools), and a RESUME
-with the KL term re-attaches the anchor from `--kl-anchor` at launch time
-instead of trusting a pickled copy.
-
-exp09 W0b (decay probe matrix) added two things on top of the above,
-investigating a reproducible pathology: KL-anchored PPO warm-started from a
-BC checkpoint DECAYS below its BC init as the KL anchor releases.
-
-1. `freeze_actor_params`: freezes the actor side of the policy (called by
-   `train_ppo.py` right after BC init, gated on `--freeze-actor 1`) so ONLY
-   the critic trains -- a sanity arm (probe B4) that must reproduce the BC
-   floor exactly, since the action distribution never moves.
-2. `train()` telemetry: pre-normalization advantage stats + a per-epoch
-   gradient-norm decomposition, both marked `exp09 W0b` below, logged via the
-   existing `self.logger` every update. These are OBSERVATIONAL ONLY -- see
-   the telemetry block's own comment for why the decomposition cannot change
-   the actual parameter update.
-"""
+new upstream `train()` (see `docs/dependency-pins.md` for the pin policy)."""
 
 from __future__ import annotations
 
@@ -62,14 +22,7 @@ from sb3_contrib import MaskablePPO
 def linear_kl_coef(
     *, coef_init: float, coef_final: float, progress_remaining: float, hold_frac: float = 0.0
 ) -> float:
-    """Hold-then-linear-decay schedule for the KL coefficient.
-
-    `coef_init` is HELD for the first `hold_frac` of training (exp09 W5
-    Rev 6: the BC checkpoint's value head starts random, so the leash stays
-    tight through the critic's warmup), then decays linearly to `coef_final`
-    over the remaining `1 - hold_frac`. `hold_frac=0.0` reproduces the
-    original run-1 schedule exactly (pure linear from step 0).
-    """
+    """Hold-then-linear-decay schedule for the KL coefficient."""
     p = float(min(1.0, max(0.0, progress_remaining)))
     h = float(min(0.99, max(0.0, hold_frac)))
     done = 1.0 - p
@@ -86,12 +39,7 @@ def _policy_weight_checksum(policy: Any) -> float:
 
 
 def assert_policy_frames_compatible(model: Any, other_model: Any, *, context: str) -> None:
-    """Raise unless `other_model` shares `model`'s observation shape, action
-    space, and policy class. Used by BOTH the BC warm-start load and the
-    standalone `--kl-anchor` attach (exp09 W5 P1, cross-model review finding:
-    a same-class anchor with a different encoder previously failed only at
-    the first training minibatch, AFTER a full rollout was collected, or
-    silently regularized toward wrong semantics when shapes coincided)."""
+    """Assert policy frames compatible."""
     model_obs = tuple(int(x) for x in model.observation_space.shape)
     other_obs = tuple(int(x) for x in other_model.observation_space.shape)
     if model_obs != other_obs:
@@ -157,19 +105,7 @@ def load_bc_policy_weights(model: Any, bc_checkpoint_path: str | Path, *, device
 
 
 def freeze_actor_params(policy: Any) -> dict[str, Any]:
-    """Freeze the actor (policy) side of an ActorCriticPolicy-family module,
-    leaving only the critic (value) side trainable (exp09 W0b probe B4,
-    `--freeze-actor 1`).
-
-    With the actor frozen, the policy's action distribution for any fixed
-    input is bit-identical throughout training -- this is a sanity arm for
-    the W0b decay-probe matrix: if PPO's post-BC decay were an
-    implementation bug elsewhere (e.g. in the reward, the KL term, or the
-    rollout plumbing) rather than genuinely entropy/advantage-noise driven,
-    a frozen actor might STILL drift, which would show up as an eval score
-    outside the BC floor's CI and mean something upstream is broken.
-
-    Freezes, if present on `policy`:
+    """Freezes, if present on `policy`:
     - `mlp_extractor.policy_net` (the actor's hidden MLP torso)
     - `action_net` (the flat action-logit head; TypeBalancedMaskablePolicy's
       own `_balanced_logits`/`_hierarchical_logits` only ADD a deterministic,
@@ -191,8 +127,7 @@ def freeze_actor_params(policy: Any) -> dict[str, Any]:
       -- kept for correctness if that ever changes.
 
     Returns a report dict (component names actually frozen + total param
-    count) for metadata/telemetry; safe to call multiple times (idempotent).
-    """
+    count) for metadata/telemetry; safe to call multiple times (idempotent)."""
     frozen_components: list[str] = []
     frozen_param_count = 0
 
@@ -232,12 +167,7 @@ def freeze_actor_params(policy: Any) -> dict[str, Any]:
 
 
 class KLAnchoredMaskablePPO(MaskablePPO):
-    """MaskablePPO + decaying KL(pi || pi_anchor) loss term (exp09 W5).
-
-    With no anchor attached (or a zero coefficient) this trains EXACTLY like
-    MaskablePPO -- the KL block is skipped entirely -- so constructing this
-    class unconditionally on the W5 path is safe.
-    """
+    """Klanchoredmaskableppo."""
 
     def __init__(
         self,
@@ -279,24 +209,12 @@ class KLAnchoredMaskablePPO(MaskablePPO):
         )
 
     def _excluded_save_params(self) -> list[str]:
-        # The anchor is re-attached from --kl-anchor at launch; never pickle it
-        # into the checkpoint zip (keeps W5 checkpoints loadable by plain
-        # MaskablePPO.load and the zip small).
+
+
         return [*super()._excluded_save_params(), "_kl_anchor_policy"]
 
     def train(self) -> None:
-        """
-        Update policy using the currently gathered rollout buffer.
-
-        Copied from sb3-contrib 2.9.0 MaskablePPO.train with TWO marked
-        insertions: the original `KL-to-anchor (exp09 W5)` block, and the
-        `W0b telemetry (exp09 W0b)` additions described in the module
-        docstring. The telemetry is purely observational: the gradient
-        decomposition reconstructs the EXACT same total gradient a plain
-        `loss.backward()` would (by linearity of differentiation), so the
-        parameter update a minibatch receives is bit-for-bit unchanged
-        whether or not the decomposition runs on it.
-        """
+        """Update policy using the currently gathered rollout buffer."""
         # Switch to train mode (this affects batch norm / dropout)
         self.policy.set_training_mode(True)
         # Update optimizer learning rate
@@ -310,14 +228,10 @@ class KLAnchoredMaskablePPO(MaskablePPO):
         entropy_losses = []
         pg_losses, value_losses = [], []
         clip_fractions = []
-        kl_anchor_values = []  # exp09 W5: logged per-minibatch KL(pi||pi_BC)
-        kl_coef = self._current_kl_coef()  # exp09 W5: one coef per train() call
+        kl_anchor_values = []
+        kl_coef = self._current_kl_coef()
 
-        # --- W0b telemetry (exp09 W0b): accumulators -----------------------
-        # Pre-normalization advantage stats (cheap: no extra forward/backward,
-        # just stats on a tensor already being computed) collected on EVERY
-        # minibatch. The gradient-norm decomposition is collected ONCE per
-        # epoch (last minibatch only) to keep overhead small -- see below.
+
         adv_pre_norm_means: list[float] = []
         adv_pre_norm_stds: list[float] = []
         adv_pre_norm_mean_abs: list[float] = []
@@ -356,11 +270,8 @@ class KLAnchoredMaskablePPO(MaskablePPO):
                 values = values.flatten()
                 # Normalize advantage
                 advantages = rollout_data.advantages
-                # exp09 W0b: pre-normalization stats BEFORE the optional
-                # normalize_advantage rescaling below. The decay-probe
-                # hypothesis is about the RAW advantage signal being ~0 for
-                # ~97% all-loss episodes; normalizing first would hide that
-                # by construction (every minibatch gets unit variance).
+
+
                 with th.no_grad():
                     adv_pre_norm_means.append(float(advantages.mean().item()))
                     adv_pre_norm_stds.append(float(advantages.std().item()))
@@ -405,11 +316,7 @@ class KLAnchoredMaskablePPO(MaskablePPO):
 
                 loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
 
-                # --- KL-to-anchor (exp09 W5): the ONE insertion -------------
-                # KL(pi_current || pi_BC) over the SAME masked support, added
-                # to the loss with the decaying coefficient. Grad flows only
-                # through the CURRENT policy's distribution (the anchor is
-                # frozen + no_grad).
+
                 kl_anchor = None
                 if self._kl_anchor_policy is not None and kl_coef > 0.0:
                     current_dist = self.policy.get_distribution(
@@ -426,10 +333,7 @@ class KLAnchoredMaskablePPO(MaskablePPO):
                     kl_anchor_values.append(float(kl_anchor.item()))
                 # -------------------------------------------------------------
 
-                # Calculate approximate form of reverse KL Divergence for early stopping
-                # see issue #417: https://github.com/DLR-RM/stable-baselines3/issues/417
-                # and discussion in PR #419: https://github.com/DLR-RM/stable-baselines3/pull/419
-                # and Schulman blog: http://joschu.net/blog/kl-approx.html
+
                 with th.no_grad():
                     log_ratio = log_prob - rollout_data.old_log_prob
                     approx_kl_div = th.mean((th.exp(log_ratio) - 1) - log_ratio).cpu().numpy()
@@ -445,18 +349,8 @@ class KLAnchoredMaskablePPO(MaskablePPO):
                 self.policy.optimizer.zero_grad()
                 is_last_minibatch = mb_idx == (n_minibatches_per_epoch - 1)
                 if is_last_minibatch:
-                    # --- W0b gradient-norm decomposition (exp09 W0b) --------
-                    # Cheapest correct approach: reuse THIS minibatch's
-                    # already-built graph (no extra forward pass), pull each
-                    # loss component's gradient separately via
-                    # autograd.grad(retain_graph=...) over the SAME trainable
-                    # params, then manually sum them into `.grad` before the
-                    # SAME clip+step the undecomposed branch takes below. By
-                    # linearity, sum(grad(component_i)) == grad(sum(component_i))
-                    # == grad(loss) exactly, so this branch's parameter update
-                    # is identical to plain loss.backward() -- only observed,
-                    # never perturbed. Runs once per epoch (last minibatch
-                    # only), not every minibatch, to keep overhead small.
+
+
                     grad_params = [p for p in self.policy.parameters() if p.requires_grad]
                     components: list[tuple[str, th.Tensor]] = [
                         ("policy", policy_loss),
@@ -466,20 +360,7 @@ class KLAnchoredMaskablePPO(MaskablePPO):
                     if kl_anchor is not None:
                         components.append(("kl", kl_coef * kl_anchor))
 
-                    # A component whose ENTIRE graph lives in frozen params is
-                    # a constant tensor with no grad_fn (`--freeze-actor 1`
-                    # makes policy/entropy/KL exactly that), and autograd.grad
-                    # on it raises "element 0 of tensors does not require
-                    # grad" -- this crashed probe B4's first train() call
-                    # (2026-07-19, an internal dataset path
-                    # train.log.failed1). allow_unused only forgives UNUSED
-                    # PARAMS, not a graphless OUTPUT. A graphless component
-                    # contributes exactly zero gradient by definition, so:
-                    # differentiate only components that require grad, and log
-                    # 0.0 for the rest. (grad_params empty would be the
-                    # everything-frozen edge; no component can require grad
-                    # then, so diff_components is [] and no autograd call
-                    # happens at all.)
+
                     diff_components = [
                         (comp_name, comp_value)
                         for comp_name, comp_value in components
@@ -542,14 +423,12 @@ class KLAnchoredMaskablePPO(MaskablePPO):
         self.logger.record("train/clip_range", clip_range)
         if self.clip_range_vf is not None:
             self.logger.record("train/clip_range_vf", clip_range_vf)
-        # exp09 W5: KL-to-anchor telemetry (0-length when anchor off)
+
         self.logger.record("train/kl_anchor_coef", float(kl_coef))
         if kl_anchor_values:
             self.logger.record("train/kl_anchor", float(np.mean(kl_anchor_values)))
-        # --- W0b telemetry (exp09 W0b): decay-probe diagnostics ------------
-        # See collect_w0b.py for the hypothesis-verdict readout of these
-        # fields (entropy-driven / noise-normalization / anchor-was-the-only-
-        # thing / implementation-bug).
+
+
         self.logger.record("train/ent_coef", float(self.ent_coef))
         if adv_pre_norm_means:
             self.logger.record("train/adv_pre_norm_mean", float(np.mean(adv_pre_norm_means)))

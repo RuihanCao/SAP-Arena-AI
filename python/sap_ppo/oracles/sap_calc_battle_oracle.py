@@ -20,18 +20,13 @@ from ..catalog import load_turtle_catalog
 from ..constants import ROOT as SAP_PPO_ROOT
 
 ROOT = Path(__file__).resolve().parents[3]
-SAP_CALC_DIR = ROOT.parent / "SAP-Calculator" / "SAP-Calculator"
+SAP_CALC_DIR = ROOT / "third_party" / "SAP-Calculator"
 SAP_CALC_CLI = SAP_CALC_DIR / "simulation" / "dist" / "cli.js"
 SAP_CALC_INDEX = SAP_CALC_DIR / "simulation" / "dist" / "index.js"
 BATTLE_WORKER_ENV = "SAP_PPO_BATTLE_WORKER"
 BATTLE_ORACLE_TIMEOUT_ENV = "SAP_PPO_BATTLE_ORACLE_TIMEOUT_SECONDS"
-# exp12 W2c (root fix for RESULTS_W1 finding 16): the persistent node worker
-# leaks heap with call volume -- measured 0.9-1.9 GB RSS and GC thrash after
-# ~120k calls (~970 myopic games), after which the driver used to wedge.
-# The worker is therefore RECYCLED (killed, transparently restarted on the
-# next call) on whichever of these two budgets is hit first. Both are
-# generous safety valves, not tuning knobs: a restart costs one node boot
-# (~0.3 s) against a leak that costs the whole run.
+
+
 BATTLE_WORKER_MAX_CALLS_ENV = "SAP_PPO_BATTLE_WORKER_MAX_CALLS"
 BATTLE_WORKER_MAX_RSS_MB_ENV = "SAP_PPO_BATTLE_WORKER_MAX_RSS_MB"
 # 20k calls = 6x below the ~120k call death point measured in finding 16.
@@ -43,9 +38,7 @@ DEFAULT_BATTLE_WORKER_MAX_RSS_MB = 600.0
 # per call would be measurable against a ~5 ms battle).
 BATTLE_WORKER_RSS_CHECK_EVERY = 256
 
-# Oracle results are only comparable across runs/experiments if the sibling
-# SAP-Calculator clone stays at this commit (branch pin-v45).
-# See docs/dependency-pins.md before moving it.
+
 SAP_CALC_PIN_SHA = "4d03d89b0c8df346bed9e9f504aefc0494f81155"
 _pin_check_done = False
 
@@ -53,8 +46,9 @@ _pin_check_done = False
 def _warn_if_calculator_drift() -> None:
     """One-time, non-fatal check that the calculator clone is at the pin.
 
-    Silent when the clone (or git) is absent, exp worktrees have no sibling
-    clone and the existing cli-missing error already covers that case.
+    Silent when the clone (or git) is absent, exp worktrees have no
+    third_party clone and the existing cli-missing error already covers that
+    case.
     """
     global _pin_check_done
     if _pin_check_done:
@@ -669,9 +663,6 @@ def _readline_with_timeout(stream: Any, *, timeout_sec: float) -> tuple[bool, st
 class _BattleWorker:
     """Persistent node battle worker with a bounded lifetime.
 
-    exp12 W2c, root fix for RESULTS_W1 finding 16 (two independent bugs, one
-    symptom -- "the driver wedges silently in do_wait"):
-
     1. LEAK: the node process's heap grows with call volume until it GC-
        thrashes and stops answering. Fixed by RECYCLING: the worker is
        killed and transparently restarted once it has served
@@ -688,8 +679,7 @@ class _BattleWorker:
        every internal path.
 
     External behavior is otherwise unchanged: same `run()` return shape,
-    same errors, same `stop()`. `stats()` is additive telemetry.
-    """
+    same errors, same `stop()`. `stats()` is additive telemetry."""
 
     def __init__(self) -> None:
         self._proc: subprocess.Popen[str] | None = None
@@ -705,14 +695,7 @@ class _BattleWorker:
     def stats(self) -> dict[str, Any]:
         """Telemetry for run reports: how many oracle calls this process
         made, how often the worker had to be recycled and why, and the last
-        RSS sample taken.
-
-        `recycles_by_reason` covers BOTH kinds of replacement: the planned
-        budget ones (`call_budget`, `rss`) and the failure ones a call can
-        force (`timeout_replacement`, `readline_failed`, `write_failed`,
-        `no_output`). An explicit `stop()` is not a recycle and is not
-        counted -- it ends the worker, it does not churn it.
-        """
+        RSS sample taken."""
         with self._lock:
             return {
                 "total_calls": int(self._total_calls),
@@ -726,17 +709,7 @@ class _BattleWorker:
 
     def _recycle_locked(self, reason: str) -> None:
         """Kill the current worker so the next call starts a fresh one, and
-        COUNT it. Caller must hold `self._lock`.
-
-        Every path that replaces a worker must come through here, not through
-        a bare `_stop_locked()`. exp12 Wa (codex review finding 4): the
-        in-`run()` failure teardowns (read timeout, write failure, empty
-        output) called `_stop_locked()` directly, so a run that churned a
-        worker on every one of those -- falling through to the one-shot CLI
-        retry each time -- still reported `recycles: 0`, i.e. the telemetry
-        that exists to make worker churn visible said "no churn" precisely
-        when churn was happening.
-        """
+        COUNT it. Caller must hold `self._lock`."""
         rss = self._last_rss_mb
         calls = self._calls_on_proc
         self._stop_locked()
@@ -814,8 +787,8 @@ class _BattleWorker:
 
     def run(self, config: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
-            # exp12 W2c: retire a worker that has served its budget before
-            # it can thrash (see the class docstring), then (re)start.
+
+
             self._maybe_recycle_locked()
             self._start()
             proc = self._proc
@@ -924,10 +897,7 @@ atexit.register(_BATTLE_WORKER.stop)
 
 
 def battle_worker_stats() -> dict[str, Any]:
-    """Process-lifetime battle-worker telemetry (exp12 W2c): oracle call
-    count, recycles and why, last RSS sample. Long runs print this so a
-    leak or a recycling storm is visible in the log instead of inferred.
-    """
+    """Battle worker stats."""
     return _BATTLE_WORKER.stats()
 
 

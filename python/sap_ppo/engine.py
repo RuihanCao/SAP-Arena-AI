@@ -69,24 +69,6 @@ from .constants import (
 class StepOutcome:
     """One engine transition's result.
 
-    `stochastic_structural` (exp13 PLAN Amendments A2.1 and A4, the
-    structural-cut rule) is True when this step made a write that RANDOMNESS
-    STEERED, into a field `legal_actions` reads. That read-set is exactly shop
-    slot `slot_type`/`item_id`/`cost`/`frozen` and the slot count, `gold`, and
-    team occupancy/`pet_id`/`level` -- so a resolution that only moved attack,
-    health, temporary stats, `sell_value`, `exp`, equipment or status effects,
-    or that only chose an ORDERING among events, leaves this False even though
-    `deterministic` is False.
-
-    A4 REVISION 2 (2026-08-06, the W1a-3 independent review, findings F1 and
-    F2) moved that causal taint from the ability runtime up to the STEP. The
-    first cut of A4 raised it inside `AbilityRuntimeContext`, which dies when
-    its `AbilityRuntime` does -- and the read-set writes that matter most do
-    not happen inside an ability runtime at all. A faint CLEARS a slot from
-    `_resolve_shop_hurt_faint_chain`, one or more runtimes after the draw that
-    decided who would faint. Two live regressions followed, both reproduced
-    against `main`:
-
     - Ant's faint buffs ONE RANDOM friend through `choose_random_indices`. The
       buff writes health, which `legal_actions` never reads -- but health
       reaching zero is exactly what REMOVES a pet, and removal writes team
@@ -106,26 +88,13 @@ class StepOutcome:
     Writes that happen BEFORE the step first draws are still not cuts, and that
     is what remains of A4 beyond what A2.6 already saves.
 
-    A4 made the two halves CAUSAL rather than merely co-occurring. A2.1 read
-    "randomness was consumed AND the read-set was written", each checked over
-    the whole step and neither asking whether they were the same event. So a
-    sleeping pill that kills a friend and the summon that answers it -- a
-    deterministic read-set write the search already planned around -- turned
-    into a cut as soon as anything else in that step drew, an event-order tie
-    or a stat buff picking its targets. Measured on the post-merge re-pin that
-    was 1,218 of 30,015 searched segments across 697 of 1,000 games
-    (`RESULTS_W1a2.md` section 9). Stopping there buys nothing: the imagined
-    board and the real one agree on exactly the field that moved. The engine
-    now reports a cut only when the dice chose part of what got written.
-
     It is what the honest frame's two cut points filter on
     (`tools/eval_versus_fullgame.py`'s commit loop and
     `tools/search_recommender.py::_prefix_walk`), so the search cut and the
     execution cut stay identical by construction. Detection stays
     ENGINE-REPORTED, never an action-type or pet whitelist (A1 ruling 2): the
     flag is raised by the code that does the writing, so a future random effect
-    that grants gold or discounts the shop becomes a cut point the day it lands.
-    """
+    that grants gold or discounts the shop becomes a cut point the day it lands."""
 
     state_after: dict[str, Any]
     legal: bool
@@ -138,9 +107,6 @@ class StepOutcome:
 @dataclass
 class StepCausality:
     """One step's causal taint, shared by every resolution inside that step.
-
-    exp13 PLAN Amendment A4 as revised after the W1a-3 review (findings F1 and
-    F2). See `StepOutcome` for why this had to leave `AbilityRuntimeContext`.
 
     Three verbs, and every site that draws or writes uses exactly one:
 
@@ -156,8 +122,7 @@ class StepCausality:
     read-set and no decision can read, so it neither arms nor notes.
 
     `structural_seen` is telemetry: "did this step write the read-set at all",
-    independent of whether the dice steered it.
-    """
+    independent of whether the dice steered it."""
 
     armed: bool = False
     structural_seen: bool = False
@@ -182,9 +147,6 @@ class StepCausality:
             self.cut = True
 
 
-# The shop-side hurt/faint cascade runaway guard. A module constant rather than
-# a local so a test can lower it and drive the `unsupported_effect` branch the
-# W1a-3 review found unreachable and unguarded (its mutant M5).
 SHOP_FAINT_CHAIN_MAX_STEPS = 256
 
 PENDING_FOOD_CTX_KEY = "_pending_food_ctx"
@@ -303,48 +265,6 @@ def _reindex_shop(shop: list[dict[str, Any]]) -> None:
         slot["shop_index"] = idx
 
 
-# THE SHOP HELPERS BELOW REBUILD `state["shop"]` WITHOUT COPYING ITS SLOTS.
-#
-# Every one of them is a list comprehension that was already allocating a new
-# list, reading slot dicts out of a state THE CURRENT CALL OWNS EXCLUSIVELY:
-# `apply_action` deep-copies its argument at the head of the function, and the
-# two end-turn resolvers do the same. That ownership copy STAYS -- it is the
-# boundary the search depends on, it is 32.6% of the call, and skipping it is
-# measured rather than argued: the arm that does mutates the caller's board on
-# 518 transitions and leaves 90,472 objects shared between input and output.
-# By the time any helper below runs, nothing outside the call can reach the
-# slots it rebuilds, so copying them again bought a distinctness nothing reads.
-#
-# exp13, 2026-08-09: `_enforce_shop_schema_limit` ran 137,043 times over
-# 118,937 recorded transitions, met the overflow it guards against 0 times and
-# changed the shop 0 times, while it and the `_partition_shop_pet_food` it
-# calls accounted for about 10.07 of `apply_action`'s 17.114 top-level deep
-# copies per call. Across all fifteen removed sites this is 16.114 of those
-# 17.114 copies and 29.80% of the call, priced in `RESULTS_deepcopy_census.md`
-# and re-measured on this branch in `RESULTS_apply_action_copies.md`. THE
-# GUARD ITSELF IS UNTOUCHED: the overflow branch is still reachable and still
-# trims, and "0 of 137,043" is a statement about that corpus, not a proof that
-# the branch is dead.
-#
-# TWO PRECONDITIONS, both asserted rather than inherited, by
-# `gate_apply_action_copies_identity.py` over the recorded corpus:
-#
-#   1. No caller writes through a slot dict it was handed. The one caller that
-#      mutates a returned list, `_insert_shop_item`, mutates the LIST (`pop`,
-#      `insert`) and never a slot. An ability added later is exactly the thing
-#      that would break this, and it would break it into a wrong board rather
-#      than a crash, which is why the gate measures it on every run.
-#   2. No state entering the engine carries the SAME slot dict at two shop or
-#      team positions. An aliased input is the one shape where this removal is
-#      not a no-op, because `_reindex_shop` would then write `shop_index`
-#      through both positions. The engine cannot create one -- the gate counts
-#      0 internal aliases in every returned state, so a chain of calls stays
-#      alias-free -- and the gate's constructed `aliased_shop_slot` case is
-#      where that boundary is DEMONSTRATED instead of assumed.
-#
-# `ability/turtle_pack.py` defines an identically named
-# `_partition_shop_pet_food` that has used `dict(s)` on the same shop of the
-# same state all along.
 def _enforce_shop_schema_limit(state: dict[str, Any], notes: list[str]) -> None:
     """Hard-guard shop invariants so schema validation cannot fail on overflow."""
     shop = [s for s in state.get("shop", []) if isinstance(s, dict)]
@@ -372,9 +292,8 @@ def _enforce_shop_schema_limit(state: dict[str, Any], notes: list[str]) -> None:
 
 
 def _partition_shop_pet_food(shop: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    # exp13: the slots are REUSED, not copied; see the note above
-    # `_enforce_shop_schema_limit`. Each slot matches exactly one of the three
-    # predicates, so the returned list holds every input slot once and none twice.
+
+
     pets = [s for s in shop if s.get("slot_type") == "pet"]
     foods = [s for s in shop if s.get("slot_type") == "food"]
     others = [s for s in shop if s.get("slot_type") not in {"pet", "food"}]
@@ -456,9 +375,7 @@ def _empty_shop_slot(slot_type: str) -> dict[str, Any]:
 def _rebuild_shop_for_roll(state: dict[str, Any], notes: list[str]) -> None:
     expected_pets, expected_foods = _expected_shop_counts(int(state["turn"]))
 
-    # exp13: no per-slot copy on these four rescans; see the note above
-    # `_enforce_shop_schema_limit`. The four predicates are mutually exclusive, and
-    # a slot this rebuild drops is simply absent from the list it assigns.
+
     frozen_pets = [s for s in state["shop"] if s["slot_type"] == "pet" and s.get("frozen")]
     frozen_foods = [s for s in state["shop"] if s["slot_type"] == "food" and s.get("frozen")]
     nonfrozen_pets = [s for s in state["shop"] if s["slot_type"] == "pet" and not s.get("frozen")]
@@ -506,9 +423,8 @@ def _item_tier_map(by_tier: dict[str, list[str]]) -> dict[str, int]:
 def _sort_shop_by_tier(state: dict[str, Any], cat: dict[str, Any]) -> None:
     pet_tiers = _item_tier_map(cat.get("pets", {}).get("by_tier", {}))
     food_tiers = _item_tier_map(cat.get("foods", {}).get("by_tier", {}))
-    # exp13: no per-slot copy; see the note above `_enforce_shop_schema_limit`.
-    # The sorts below reorder these lists of references and READ the slots to key
-    # on; they never write through one.
+
+
     pets = [s for s in state["shop"] if s.get("slot_type") == "pet"]
     foods = [s for s in state["shop"] if s.get("slot_type") == "food"]
 
@@ -567,10 +483,7 @@ def _roll_shop_slots(state: dict[str, Any], cat: dict[str, Any], rng: random.Ran
             slot.pop("at", None)
             slot.pop("hp", None)
 
-    # Sloth easter egg (exp02 ghidra RandomizeShop): the shop draws once per roll
-    # and, only if it lands under SLOTH_ROLL_PROB, turns the first freshly-rolled
-    # (non-frozen) pet slot into Sloth. The draw is always consumed so Sloth never
-    # appears as a normal uniform pick (it is excluded from pet_pool above).
+
     if pet_pool and rng.random() < SLOTH_ROLL_PROB:
         for slot in state["shop"]:
             if slot.get("slot_type") == "pet" and not slot.get("frozen"):
@@ -691,15 +604,8 @@ def _combine_pet_stats(pet_to_keep: dict[str, Any], pet_to_merge: dict[str, Any]
     pet_to_keep["health"] = int(_cap_stat(int(pet_to_keep["perm_health"]) + int(pet_to_keep["temp_health"])))
     merged_status = sorted(set(list(pet_to_keep.get("status_effects", [])) + list(pet_to_merge.get("status_effects", []))))
     pet_to_keep["status_effects"] = merged_status
-    # Equipment (Ruihan ruling 2026-08-01): the combine TARGET keeps its own
-    # equipment, an unequipped target inherits the merged pet's, and when both
-    # carry one the target wins, so the loser's perk status must not ride along
-    # in the merged status set.
-    #
-    # Only equipment_id moves. A perk's status effect is never ADDED here: the
-    # replay compiler's entry boards carry equipment_id with an EMPTY status
-    # list, and synthesising the status back would silently change damage
-    # mitigation on real human turns (measured, exp12 W0 faithfulness probe).
+
+
     keep_equipment = pet_to_keep.get("equipment_id") or None
     merge_equipment = pet_to_merge.get("equipment_id") or None
     if keep_equipment is None and merge_equipment is not None:
@@ -710,13 +616,7 @@ def _combine_pet_stats(pet_to_keep: dict[str, Any], pet_to_merge: dict[str, Any]
         if loser_status and loser_status != winner_status:
             pet_to_keep["status_effects"] = [s for s in merged_status if s != loser_status]
 
-    # Direction-independent combine (Ruihan ruling 2026-08-01): stats are the
-    # max of the two plus 1 + the LOWER exp, which is what "always merge the
-    # lower-exp pet into the higher-exp one" evaluates to. Exp still totals
-    # keep + merge + 1 (unchanged, already direction-independent), and the
-    # level-up flag is measured against the HIGHER of the two input levels so a
-    # reverse-direction merge cannot re-fire a threshold that was already
-    # crossed.
+
     keep_exp = max(0, min(5, int(pet_to_keep.get("exp", 0))))
     merge_exp = max(0, min(5, int(pet_to_merge.get("exp", 0))))
     return _gain_experience(
@@ -831,7 +731,7 @@ def _insert_shop_item(
 
 def _remove_linked_shop_slots(state: dict[str, Any], link_id: str, notes: list[str]) -> None:
     before = len(state["shop"])
-    # exp13: no per-slot copy; see the note above `_enforce_shop_schema_limit`.
+
     state["shop"] = [s for s in state["shop"] if str(s.get("link_id")) != str(link_id)]
     removed = before - len(state["shop"])
     if removed > 0:
@@ -1039,33 +939,7 @@ def legal_actions(state: dict[str, Any]) -> list[dict[str, Any]]:
         actions.append({"type": "ROLL"})
     actions.append({"type": "END_TURN"})
 
-    # Deduplicate while PRESERVING ORDER, and order is a contract: an action's
-    # position in this list is the action index the recorded chains, the label
-    # rows and the BC catalog mask are all built against. A dedup that returned
-    # the same actions in a different order would be a silent dataset break,
-    # not a speedup, which is why `gate_legal_actions_key_identity.py` compares
-    # the returned list byte for byte with order included, over recorded boards.
-    #
-    # exp13, 2026-08-09: the key used to be
-    # `json.dumps(action, sort_keys=True, separators=(",", ":"))` -- one string
-    # allocated per enumerated action and never read by anything. Measured on
-    # 200 real recorded boards it was 43.9% of this call, this call is 14.95%
-    # of labelling play wall clock, and across 22,353 enumerated actions the
-    # dedup removed exactly 0 duplicates. So the string was paying for a
-    # separation nothing on these boards needed, at the most expensive price
-    # available for reaching a `set`.
-    #
-    # `hashable_action_key` separates exactly what `json.dumps` separates, per
-    # value and per type (`action_keys.py` gives the rules and the reason each
-    # one is load-bearing). That is what makes this swap a no-op on the
-    # returned list by construction rather than a claim resting on the 0.
-    # Measured in `RESULTS_legal_actions_key.md`; it is the same defect the
-    # 2026-08-08 wave removed from `bc_recommender.legal_mask`, one layer down.
-    #
-    # The dedup itself STAYS. It removes nothing on the corpus measured, but
-    # "nothing on this corpus" is not "nothing by construction" -- BUY_FOOD in
-    # particular is enumerated from three branches -- and with a tuple key it
-    # is no longer expensive enough to be worth trading a guard for.
+
     seen = set()
     unique: list[dict[str, Any]] = []
     for action in actions:
@@ -1165,12 +1039,7 @@ def _run_ability_events(
     slot ends up empty.
 
     An `unsupported_effect` calls `force_cut` by conservative default: an
-    unmodelled effect could have written anything, for any reason.
-
-    The tie draw and the `_reseed_meta` that follows it are UNCHANGED, so the
-    board this returns is bit-identical to the pre-amendment engine's; only
-    what the step reports is new.
-    """
+    unmodelled effect could have written anything, for any reason."""
     if not events:
         return True, None
 
@@ -1288,19 +1157,8 @@ def _emit_summon_events(
 
 
 def _apply_team_permutation(state: dict[str, Any], order: list[int]) -> None:
-    # exp13, 2026-08-09: neither copy is load-bearing. The OUTER one existed so
-    # the source list would survive the assignment, which it does anyway -- a list
-    # comprehension is fully evaluated before the assignment binds. The INNER one
-    # existed so no two entries of the new team could be the same object, and
-    # `order` already guarantees that: it is a PERMUTATION, so every index appears
-    # exactly once. Both callers build it by rotating a slice of
-    # `list(range(len(state["team"])))` (`_push_forward_from_slot`,
-    # `_push_backward_from_slot`). That is a proof about the callers rather than a
-    # sample -- the recorded corpus reaches this helper 17 and 85 times in 118,937
-    # transitions -- so `gate_apply_action_copies_identity.py` asserts the
-    # permutation property on every real call AND constructs the summon cases the
-    # corpus barely covers. Its `repeated_index` mutation is what a broken `order`
-    # would do here.
+
+
     old_team = state["team"]
     state["team"] = [old_team[int(i)] for i in order]
     remap_ability_counters_for_reorder(state, list(order))
@@ -1705,16 +1563,8 @@ def _resolve_shop_hurt_faint_chain(
                 pet_id,
                 pet_level,
             )
-            # A2.1: clearing a slot writes team occupancy and `pet_id`.
-            #
-            # A4 rev 2, and this is the line the review's F1 turned on. When
-            # nothing has drawn this step, reaching zero health is a
-            # deterministic consequence of the action just committed (a
-            # sleeping pill, a chili) -- the search planned through it and
-            # there is nothing to stop for. But health is exactly what a random
-            # stat buff writes, so once this step HAS drawn, which slot ends up
-            # empty can be the dice's doing. The taint is per-step precisely so
-            # it is still alive here, runtimes after the draw that set it.
+
+
             _clear_team_slot(state, idx)
             causality.note_structural()
 
@@ -2626,10 +2476,8 @@ def apply_action(state: dict[str, Any], action: dict[str, Any]) -> StepOutcome:
                 stochastic_reason = _merge_stochastic_reason(stochastic_reason, ability_reason)
 
     elif action_type == "REORDER":
-        # exp13: the same removal as `_apply_team_permutation`, and here the
-        # permutation is checked before this branch can run -- `check_legal` has
-        # already rejected any REORDER whose `sorted(order) != [0, 1, 2, 3, 4]`
-        # (`_legal_reorder`), so every index appears exactly once.
+
+
         old = new_state["team"]
         new_state["team"] = [old[i] for i in action["order"]]
         remap_ability_counters_for_reorder(new_state, list(action["order"]))

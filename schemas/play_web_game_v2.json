@@ -371,10 +371,10 @@
         "honest_driver_commit", "git_sha"
       ],
       "properties": {
-        "agent_id": {"type": "string", "pattern": "^arm-c-r[0-9]+-a[0-9]+$"},
+        "agent_id": {"type": "string", "minLength": 1},
         "agent_name": {"type": "string", "minLength": 1},
-        "model_revision": {"type": "string", "pattern": "^r[0-9]+$"},
-        "search_revision": {"type": "string", "pattern": "^a[0-9]+$"},
+        "model_revision": {"type": "string", "minLength": 1},
+        "search_revision": {"type": "string", "minLength": 1},
         "baseline_id": {"type": "string", "minLength": 1}
         ,"inference_time_revision": {"const": "fixed-clock-v1"}
       }

@@ -5,13 +5,6 @@ canonical, and it separates exactly the values JSON separates. It is also the
 most expensive way to reach a `dict` or a `set`, because it allocates a string
 per lookup. Two hot paths were paying that and neither ever read the string:
 
-  * `tools/bc_recommender.legal_mask` looks an action up in the 309-entry
-    action catalog once per engine-legal action per decode step. Moved off the
-    JSON key on 2026-08-08 (`RESULTS_speedup.md`).
-  * `engine.legal_actions` deduplicates its own enumeration once per enumerated
-    action. Moved off the JSON key on 2026-08-09
-    (`RESULTS_legal_actions_key.md`).
-
 Both want the same function, so it lives here, in a leaf module that imports
 nothing from the package: `engine` is below `train.env`, so this could not stay
 where it was first written without an import cycle, and a second copy of a key
@@ -39,8 +32,7 @@ cannot encode raise here too, as they do there.
 
 The keys are for LOOKUP AND DEDUP ONLY -- never stored, never compared against
 anything a previous process wrote. `train/env.py::_action_key` remains the
-textual key for everything that does persist one.
-"""
+textual key for everything that does persist one."""
 
 from __future__ import annotations
 
@@ -101,15 +93,7 @@ def hashable_action_key(action: dict[str, Any]) -> tuple[Any, ...]:
 
     Written as a flat loop rather than the obvious
     `tuple((k, action_key_value(action[k])) for k in sorted(action))` because a
-    call per field costs about as much as the `json.dumps` this replaces.
-
-    Measured on the real engine-legal action mix by
-    an internal analysis script -- 200 recorded
-    decision boards, 22,787 actions, of which 83.2% are REORDER and therefore
-    carry a list: 1.87 us per lookup through the JSON key, 0.76 us through this
-    one. The list is why the margin is 2.4x on that mix and 3.6x to 5.1x on the
-    flat shapes; the mix, not the mechanism, sets the saving.
-    """
+    call per field costs about as much as the `json.dumps` this replaces."""
     items = []
     for key in sorted(action):
         value = action[key]

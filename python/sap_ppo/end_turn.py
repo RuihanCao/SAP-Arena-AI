@@ -62,14 +62,6 @@ def apply_resolved_battle_to_state(
 ) -> tuple[dict[str, Any], list[str], BattleLivesUpdate, Any]:
     """Advance ONE side from its pre-battle board past an ALREADY-RESOLVED battle.
 
-    exp16 W2: lifted verbatim out of the tail of
-    `resolve_end_turn_with_sampled_battle` (which now calls it) so that
-    `resolve_duel_turn` can apply the SAME post-battle bookkeeping to two
-    sides of one battle without a second hand-written copy of it -- the
-    exact failure mode `versus_lives.py`'s own docstring exists to prevent.
-    Nothing here samples, parses or runs a battle: by the time it is called
-    the verdict is already a `"win"`/`"loss"`/`"draw"` string.
-
     `battle_state` is the PRE-battle board (post `pre_battle_fn`, i.e. after
     end-of-turn abilities). What this does, in the original's order:
 
@@ -83,31 +75,13 @@ def apply_resolved_battle_to_state(
        `turn_start_rule:*` engine notes, and `meta.last_battle_result` +
        `meta.game_mode`.
 
-    (The exp12 W0 note this replaces, kept because it is the reason the
-    order above is safe: the engine's post-battle step never reads or
-    writes `lives`/`trophies`/`meta.versus.opponent_lives` -- `engine.py`
-    contains no occurrence of either word -- so feeding it the pre- or
-    post-adjustment totals cannot change what it produces. Doing the
-    adjustment in ONE place after it is what lets a single call cover both
-    halves of the rule, including the turn-3 heal.)
-
-    `max_lives` (default None = leave `apply_battle_outcome_to_lives` on its
-    own default, 6): the cap the turn-3 heal restores toward, forwarded only
-    when not None so that this module keeps working against a
-    `versus_lives.py` that does not accept the argument yet. exp13's
-    real-arena ruler passes `versus_lives.ARENA_START_LIVES` (5); on a
-    checkout where exp13 W0a has not merged, passing anything non-None
-    raises `TypeError` from the callee, which is the loud failure we want
-    rather than a silently ignored cap.
-
     Returns `(state_after, notes, lives_update, post_outcome)`.
     `notes` is `post_battle_fn`'s own notes followed by the zero-to-two
     `turn_start_rule:*` notes, i.e. exactly the contiguous slice the caller
     used to splice into its engine-note list. The fourth element is
     `post_battle_fn`'s raw `StepOutcome`; the caller needs its
     `stochastic_reason` for the transition it builds, and that is the one
-    thing the first three cannot carry.
-    """
+    thing the first three cannot carry."""
     after_battle = copy.deepcopy(battle_state)
     battle_versus_meta = after_battle.get("meta", {}).get("versus", {}) if isinstance(after_battle.get("meta"), dict) else {}
     if not isinstance(battle_versus_meta, dict):
@@ -172,30 +146,6 @@ def resolve_end_turn_with_sampled_battle(
 ) -> dict[str, Any]:
     """Resolve END_TURN using sampled replay opponents + battle oracle.
 
-    `simulation_count` (exp09 W1, default 1 -- byte-for-byte the prior
-    hardcoded behavior, so every existing caller (`TrainingEnv.step`,
-    `PlayWebSession._apply_end_turn_with_battle`,
-    `tools/eval_versus_fullgame.py`'s own per-turn loop) is unaffected):
-    forwarded to `config["simulationCount"]`. A count > 1 still resolves to
-    ONE discrete `battle["outcome"]` (`oracles/sap_calc_battle_oracle.py::
-    battle_outcome_from_result` majority-votes `playerWins`/`opponentWins`/
-    `draws`), so every lives-bookkeeping rule below is unchanged regardless
-    of the count -- only the VARIANCE of that single outcome changes. Used
-    by `search_recommender.py`'s rollout scorer (`--search-scoring rollout`)
-    to resolve a shortlisted candidate's OWN turn with `--rollout-ksim`
-    (steadier signal for the turn actually being decided); every subsequent
-    simulated turn in that same continuation reverts to the default (1),
-    i.e. the driver's normal single-draw mechanics.
-
-    `max_lives` (exp13 W0a, default None = unchanged): forwarded to
-    `versus_lives.apply_battle_outcome_to_lives` as the cap its turn-3 heal
-    restores toward. None leaves that function on its own default (6), so
-    every pre-exp13 caller -- `TrainingEnv.step`, `PlayWebSession`,
-    `eval_versus_fullgame.py` under its default `--game-rules versus` -- is
-    byte-for-byte unaffected. exp13's real-arena ruler passes 5 (see that
-    module's docstring). This is a pass-through knob only: nothing about how
-    a battle is sampled, parsed or resolved reads it.
-
     Returns a dict envelope:
     - ok: bool
     - error: str | None
@@ -205,8 +155,7 @@ def resolve_end_turn_with_sampled_battle(
     - parsed_state: replay-bot parsed calculator state when available
     - battle: oracle result payload when available
     - parse_mode / parse_error
-    - forced_pid
-    """
+    - forced_pid"""
     before = copy.deepcopy(before_state)
     before_meta = before.get("meta") if isinstance(before.get("meta"), dict) else {}
     before_versus_meta = before_meta.get("versus") if isinstance(before_meta.get("versus"), dict) else {}
@@ -470,11 +419,8 @@ def resolve_end_turn_with_sampled_battle(
         "state_after": after,
         "deterministic": False,
         "stochastic_reason": stochastic_reason,
-        # exp13 A2.1: shape parity with `api.step`'s transition. END_TURN is a
-        # turn boundary regardless, so nothing reads this to decide a cut.
-        # `getattr` because `pre_battle_fn`/`post_battle_fn` are INJECTED and
-        # duck-typed here, exactly like every other field this module reads
-        # off them.
+
+
         "stochastic_structural": bool(
             getattr(pre, "stochastic_structural", False)
             or getattr(post, "stochastic_structural", False)
@@ -554,42 +500,11 @@ def resolve_duel_turn(
     battle_logs_enabled: bool = False,
     max_lives: int | None = None,
 ) -> dict[str, Any]:
-    """Resolve END_TURN for BOTH sides of a head-to-head duel (exp16 W2).
-
-    The sibling of `resolve_end_turn_with_sampled_battle`, with the opponent
+    """The sibling of `resolve_end_turn_with_sampled_battle`, with the opponent
     replaced by a second live state instead of a sampled human replay: no
     sampling, no replay parsing, no opponent participation-id chain.
 
     Three things here are rules, not implementation details:
-
-    1. **One battle, not two.** `run_battle_fn` is called exactly ONCE, with
-       the human's pre-battle team as `playerPets` and the AI's as
-       `opponentPets`, and its verdict is read from the human's point of
-       view. The oracle is an unseeded Monte Carlo (the same pair of boards
-       can go 18-2 across 20 draws), so calling it once per side would let
-       BOTH sides win the same battle.
-    2. **One `apply_battle_outcome_to_lives` per side, the AI's inverted.**
-       `versus_lives.py` is already two-sided -- it moves `lives` and
-       `opponent_lives` in the same call -- so applying it once per side
-       with `win <-> loss` swapped is arithmetically identical to applying
-       it once, and the turn-3 heal fires exactly ONCE on each side's own
-       life total. That module gets zero edits from this wave;
-       `test_duel_game.py` asserts the symmetry rather than trusting this
-       paragraph.
-    3. **Cross-fed last-seen boards go through the training round-trip**,
-       see `_set_duel_last_opponent_team`.
-
-    `game_mode` accepts `"versus"` only. A duel is two-sided by
-    construction: each side's `meta.versus.opponent_lives` mirrors the
-    other's `lives`, and that mirror is what `train/env.py::
-    TrainingEnv._is_done` reads to end the game. `game_mode="arena"` would
-    send `apply_battle_outcome_to_lives` down its trophy branch, which
-    never touches `opponent_lives` -- the mirror would silently freeze and
-    neither side could ever be eliminated. exp13's arena ruler is a POOL
-    ruler (5 lives, 10 trophies, opponents drawn from a pool), and the part
-    of it that transfers to a head-to-head duel is its life cap, which
-    arrives here as `max_lives`, not as a game mode. Anything else,
-    `"arena"` included, is rejected with `invalid_game_mode:<mode>`.
 
     Returns one envelope for the pair:
     - ok / error
@@ -600,8 +515,7 @@ def resolve_duel_turn(
       `turn_start_rule` flags, `notes`, and a canonical END_TURN
       `transition`)
     - battle: the oracle payload
-    - timing_ms
-    """
+    - timing_ms"""
     t_total_start = time.perf_counter()
     timing_ms: dict[str, int] = {}
 

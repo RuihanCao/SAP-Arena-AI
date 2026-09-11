@@ -327,15 +327,12 @@ def value_feature_width(mode: str = VALUE_FEATURE_MODE_V1, *, buckets: int = DEF
 
 
 def encode_value_features_v2(state: dict[str, Any], opponent_team: Any) -> np.ndarray:
-    """Position-aware, ability-aware value features (exp06 A2).
-
-    Keeps v1's global scalars (turn/gold/lives/trophies/opponent_lives) and
+    """Keeps v1's global scalars (turn/gold/lives/trophies/opponent_lives) and
     team summary stats (count/attack/health/power/avg_level) unchanged, but
     replaces the position-blind, hashed bag-of-pets block with a per-slot
     block (occupied flag + one-hot pet identity over the real catalog vocab,
     NOT a 128-bucket hash + attack/health/level/exp/has_equipment), for both
-    the player's team (slot order preserved) and the opponent's team.
-    """
+    the player's team (slot order preserved) and the opponent's team."""
     st = state if isinstance(state, dict) else {}
     turn = max(1, _safe_int(st.get("turn"), 1))
     gold = max(0, _safe_int(st.get("gold"), 0))
@@ -383,10 +380,7 @@ def encode_value_features_for_mode(
     mode: str = VALUE_FEATURE_MODE_V1,
     buckets: int = DEFAULT_HASH_BUCKETS,
 ) -> np.ndarray:
-    """Mode dispatch used by the planner/builder/trainer/eval so callers don't
-    need to branch themselves. mode="v1" is byte-identical to calling
-    `encode_value_features` directly (unchanged default behavior).
-    """
+    """Encode value features for mode."""
     mode_norm = str(mode or VALUE_FEATURE_MODE_V1).strip().lower()
     if mode_norm == VALUE_FEATURE_MODE_V1:
         return encode_value_features(state, opponent_team, buckets=buckets)

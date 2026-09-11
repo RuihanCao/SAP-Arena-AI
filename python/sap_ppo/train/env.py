@@ -29,27 +29,6 @@ def _action_key(action: dict[str, Any]) -> str:
     return json.dumps(action, sort_keys=True, separators=(",", ":"))
 
 
-# exp13 speedup (2026-08-08): the SAME index, reached without building a JSON
-# string. `_action_key` above stays exactly as it is -- it is a TEXTUAL key
-# that other code stores and compares (`chain_bc_dataset.map_action_index`
-# documents the exact format as its dataset contract, `frame_parity_harness`
-# compares action SETS with it), so its return type is a compatibility
-# surface. What changes is that the one HOT consumer, `bc_recommender.
-# legal_mask`, stops paying `json.dumps` to find an integer in a 309-entry
-# dict once per engine-legal action per decode step. That cost was 99.28 s,
-# 9.13% of labelling play wall clock (`RESULTS_speedup.md`, the 2026-08-08
-# section 2.2); what this actually SAVES is 6.37% of it, because a tuple key
-# is not free either -- measured in the section after that one.
-#
-# The key itself moved to `sap_ppo/action_keys.py` on 2026-08-09, unchanged,
-# when `engine.legal_actions` needed the same function for its own dedup
-# (`RESULTS_legal_actions_key.md`). `engine` is below this module, so a shared
-# leaf was the only way to keep ONE implementation of a key whose whole job is
-# to separate exactly what `json.dumps` separates. Why that matters, and every
-# type rule it follows, is documented there. The private aliases are imported
-# at the top of this file and kept because gates and tests patch them by name.
-
-
 def _build_action_catalog() -> list[dict[str, Any]]:
     catalog: list[dict[str, Any]] = []
 
@@ -83,13 +62,8 @@ def _build_action_catalog() -> list[dict[str, Any]]:
 
 ACTION_CATALOG: list[dict[str, Any]] = _build_action_catalog()
 ACTION_INDEX_BY_KEY: dict[str, int] = {_action_key(action): idx for idx, action in enumerate(ACTION_CATALOG)}
-# The parallel table `bc_recommender.legal_mask` reads. Built from the SAME
-# catalog in the SAME order, so the two dicts are the same function of an
-# action by construction -- `test_exp13_labelling_hot_path.py` checks that
-# over every catalog entry rather than trusting the construction. The size
-# check makes a key COLLISION impossible to ship silently: a collision would
-# shrink this dict, and would otherwise surface as one action quietly
-# answering with another action's index.
+
+
 ACTION_INDEX_BY_TUPLE_KEY: dict[tuple[Any, ...], int] = {
     _action_index_key(action): idx for idx, action in enumerate(ACTION_CATALOG)
 }
@@ -98,22 +72,10 @@ if len(ACTION_INDEX_BY_TUPLE_KEY) != len(ACTION_CATALOG):
         f"action_index_key_collision:{len(ACTION_INDEX_BY_TUPLE_KEY)}!={len(ACTION_CATALOG)}"
     )
 
-# exp09 W5 P0 Part B: env-side visited-state anti-cycle guard + progress cap.
-# Mirrors `tools/bc_recommender.py`'s eval-time decode guard exactly (same
-# `_state_signature`, same cap value -- see `bc_recommender.
-# DEFAULT_MAX_CHAIN_STEPS`, tools/bc_recommender.py:99) so a training rollout
-# cannot spin in a within-turn cycle (e.g. FREEZE<->UNFREEZE, ROLL
-# back-and-forth via a no-op) any more than the eval decoder can. Duplicated
-# as a literal rather than imported from `bc_recommender` because
-# `bc_recommender` imports `train.env` -- importing back would cycle; keep
-# this in sync by hand if that eval-side cap ever changes.
+
 _VISITED_GUARD_PROGRESS_CAP = 25
 
-# One-time-per-action-type warning dedup for the "catalog-missing engine-legal
-# action" case (see `TrainingEnv.legal_actions()`'s docstring, exp09 W5 P0
-# Part B item 3): training must not crash mid-run over a catalog gap, but a
-# silent, repeated drop would be invisible. Module-level (not per-env) so the
-# "once" is once per PROCESS, matching a long training run's expectations.
+
 _unmapped_action_types_warned: set[str] = set()
 
 
@@ -135,7 +97,7 @@ def _warn_unmapped_action_once(action: dict[str, Any]) -> None:
             f"has no ACTION_CATALOG index (example={action!r}); silently excluded "
             "from legal_actions()/legal_action_mask() so a rare catalog gap cannot "
             "crash a training run (contrast tools.bc_recommender.legal_mask, which "
-            "raises at eval time -- see exp09 W5 P0 task notes). Logged once per "
+            "raises at eval time). Logged once per "
             "action type per process.",
             RuntimeWarning,
             stacklevel=2,
@@ -228,73 +190,21 @@ class TrainingEnv:
         # training envs opt into the decorrelated `training_opening_
         # index()` hashing in reset().
         self._opening_env_seed = opening_env_seed
-        # exp09 W5 P0 Part B: within-turn visited-state anti-cycle guard +
-        # progress-action cap, persistent env state (not a local variable
-        # inside one decode loop the way `bc_recommender.recommend()` has
-        # it) so it survives across the many `step()` calls of one training
-        # turn. Seeded with THIS state's own signature (mirrors
-        # `bc_recommender.recommend()`'s `visited = {_state_signature(work)}`
-        # at the start of its walk) so a true no-op action is excluded from
-        # the very first `legal_action_mask()` call, same as reset()/after
-        # every END_TURN below.
+
+
         self.visited: set[str] = {_state_signature(self.state)}
         self._progress_action_count = 0
-        # exp09 W5 P0 (opponent-frame parity): auto-incrementing fallback used
-        # by `reset()` whenever a caller doesn't thread an explicit
-        # `episode_index` (see `reset()`'s docstring / `SapPpoGymEnv.reset()`,
-        # which DOES thread one). Advances by one on every `reset()` call
-        # regardless of which source (explicit arg or this fallback) actually
-        # got used, so the two never desync.
+
+
         self._episode_index = 0
-        # exp09 W5 P0 Fix B (guard soundness, cross-model review finding 2):
-        # base value for `reset()`'s per-episode `meta.seed` derivation --
-        # see that method's docstring. Updated whenever a caller supplies an
-        # explicit `seed=` to `reset()` (the common case: at least the first
-        # reset of a real rollout does, e.g. per-rank `env_seed` in
-        # `train_ppo.py::_make_env`), so a `reset()` call that omits `seed=`
-        # (e.g. an auto-reset mid-rollout) still keeps advancing off a real
-        # base instead of silently falling back to a shared 0 forever.
+
+
         self._seed_base = 0
         _set_training_rolls_this_turn(self._initial_state, 0)
         _set_training_rolls_this_turn(self.state, 0)
 
     def reset(self, seed: int | None = None, *, episode_index: int | None = None) -> dict[str, Any]:
         """Reset to the fixture's initial state.
-
-        `episode_index` (exp09 W5 P0, default None -> this env's own
-        auto-incrementing `self._episode_index`): if the wired
-        `opponent_provider` exposes `initial_pid_for_game(episode_index)`
-        (only `ChainSnapshotSource` does today) AND this is a VERSUS,
-        non-one-turn episode, seeds `meta.versus.
-        current_opponent_participation_id` to a freshly sampled long-pid
-        BEFORE returning -- mirroring `tools/eval_versus_fullgame.py::
-        _new_game_state`'s own pre-turn-1 seeding, so a training rollout
-        follows ONE real opponent across the whole game (`end_turn.py`
-        reads this field as the forced pid on every END_TURN) instead of
-        starting from `sample_random`'s uniform draw on turn 1 the way it
-        used to. Guarded to versus mode + a capable provider so arena /
-        one-turn-mode / non-chain-snapshot-provider callers are BYTE-FOR-BYTE
-        unaffected (this is the existing "don't break other modes"
-        contract this method already had for its `seed=` handling below).
-
-        exp09 W5 P0 Fix B (guard soundness, cross-model review finding 2):
-        ALSO sets `meta.seed_known=True` + a concrete, per-episode
-        `meta.seed` -- UNCONDITIONALLY (every mode, not just versus), unlike
-        the pid-seeding above -- mirroring `tools/eval_versus_fullgame.py::
-        _new_game_state`'s identical `meta.seed_known=True` / `meta.seed=
-        engine_seed` pair (see that function's own docstring for why
-        `engine._rng_from_state` needs this: without it, ROLL's shop regen
-        seeds from OS entropy and is not reproducible call to call). This is
-        what makes `legal_actions()`'s within-turn anti-cycle guard SOUND:
-        `_forward_signature` forward-simulates a candidate action via a
-        SEPARATE `engine.step()` call before the real one runs, and that
-        prediction only means anything if replaying the same action from the
-        same state is deterministic (see `tools/frame_parity_harness.py`'s
-        `guard_soundness` dimension, the regression gate for this fix).
-        `self._seed_base` (see `__init__`) + this episode's index keeps the
-        seed deterministic YET varying across episodes (shop diversity),
-        the same shape as the pid-seeding `initial_pid_fn(ep_index)` call
-        below.
 
         Full-game frame fix (train/opening_source.py): `ep_index` is now
         resolved BEFORE the state is built (previously right after) because
@@ -318,8 +228,7 @@ class TrainingEnv:
         every EVAL call site (`eval_versus_fullgame.py`, `eval_ppo.py`) --
         eval's own reproducibility depends on `game_index` 0, 1, 2, ...
         mapping to a FIXED, repeatable sequence, which only the bare-index
-        path guarantees.
-        """
+        path guarantees."""
         ep_index = int(episode_index) if episode_index is not None else int(self._episode_index)
 
         base_game_mode = str(self._initial_state.get("meta", {}).get("game_mode") or "arena").strip().lower()
@@ -339,13 +248,8 @@ class TrainingEnv:
         if seed is not None:
             self._seed_base = int(seed)
             random.seed(int(seed))
-            # exp09 W5 P0 Fix B (minor): `ChainSnapshotSource` (train/
-            # runtime.py::build_opponent_provider(mode="chain_snapshot"))
-            # names its internal RNG `_random_rng`, not `_rng` -- the OTHER
-            # provider types (`train/opponents.py`) all use `_rng`. Try both
-            # so whichever attribute the concrete provider actually uses
-            # gets reseeded instead of this silently no-op-ing for
-            # `ChainSnapshotSource`.
+
+
             for rng_attr in ("_rng", "_random_rng"):
                 rng = getattr(self.opponent_provider, rng_attr, None)
                 if hasattr(rng, "seed"):
@@ -367,11 +271,7 @@ class TrainingEnv:
         return copy.deepcopy(self.state)
 
     def legal_actions(self, *, apply_visited_guard: bool = True) -> list[dict[str, Any]]:
-        """Engine-true legality (exp09 W5 P0 Part A), guarded against
-        within-turn cycles and capped at `_VISITED_GUARD_PROGRESS_CAP`
-        genuine progress actions this turn (Part B).
-
-        `apply_visited_guard` (default True -- this is what every real
+        """`apply_visited_guard` (default True -- this is what every real
         caller wants, including `SapPpoGymEnv.action_masks()`, so Part B is
         "on" unless a caller deliberately opts out): set False to see PURE
         Part-A legality (engine-true only, no within-turn guard/cap at
@@ -386,18 +286,6 @@ class TrainingEnv:
         tested (engine-true legality vs the OLD RL anti-spam heuristics,
         Part A); Part B's guard/cap RULE is verified by its own focused
         test (`python/tests/test_visited_guard.py`), not that harness.
-
-        Part A: this is now EXACTLY `api.legal_actions(self.state)` -- every
-        RL anti-spam heuristic that used to live here is REMOVED (the
-        END_TURN gold==0 gate, the SELL >2-pet gate, the REORDER
-        gold-or-sleeping-pill gate, the tactical-action lock, the
-        freeze-slot-until-roll lock, and the redundant FREEZE/UNFREEZE
-        already-frozen check -- the engine's OWN `legal_actions`
-        (`engine.py::legal_actions`) already excludes FREEZE on an already-
-        frozen slot / UNFREEZE on a not-frozen slot, so re-checking it here
-        was always dead weight). This is what makes this env's legality
-        match `tools/bc_recommender.py::legal_mask` (engine-true only) --
-        see internal project notes W5 P0 frame-parity harness.
 
         Part B (NOT a game rule -- this env's own within-turn bookkeeping,
         mirroring `bc_recommender.py`'s eval-time decode guard exactly: same
@@ -414,15 +302,7 @@ class TrainingEnv:
              see `_record_progress_action`), every non-END_TURN action is
              excluded, again leaving END_TURN as the only legal action.
         `legal_action_mask()` / `legal_action_indices()` derive from this
-        method (unchanged), so they automatically inherit both parts.
-
-        A catalog-unmapped engine-legal action (should not happen with the
-        shipped 309-entry ACTION_CATALOG; W4 probes verified 0-miss coverage
-        over the full BC dataset) is dropped with a one-time-per-type
-        warning rather than raised -- unlike `bc_recommender.legal_mask`,
-        which raises, because a live training run must not crash over this
-        (see `_warn_unmapped_action_once`).
-        """
+        method (unchanged), so they automatically inherit both parts."""
         allowed: list[dict[str, Any]] = []
         cap_reached = apply_visited_guard and self._progress_action_count >= _VISITED_GUARD_PROGRESS_CAP
         for action in legal_actions(self.state):
@@ -524,12 +404,6 @@ class TrainingEnv:
         """Env-side rule-violation pre-check inside `step()` (defense in
         depth, run before the action ever reaches the real engine).
 
-        exp09 W5 P0 Part A removed every RL anti-spam heuristic that used
-        to live here (END_TURN's gold==0 gate, SELL's >2-pet gate,
-        REORDER's gold-or-sleeping-pill gate, the tactical-action lock, the
-        freeze-slot-until-roll lock) -- `TrainingEnv` legality is now
-        engine-true, full stop (see `legal_actions()`'s docstring).
-
         What is left is Part B's within-turn anti-cycle guard + progress
         cap, RE-CHECKED here (the primary enforcement point is
         `legal_actions()` / `legal_action_mask()`, consulted by
@@ -540,8 +414,7 @@ class TrainingEnv:
         with the default (True); `apply_visited_guard=False` exists only so
         `frame_parity_harness.py`'s Part-A-only diagnostic (see
         `legal_actions()`'s docstring) stays honest when explaining a mask
-        mismatch under that same mode.
-        """
+        mismatch under that same mode."""
         action_type = str(action.get("type", "")).strip().upper()
         if action_type == "END_TURN" or not apply_visited_guard:
             return None
@@ -591,16 +464,8 @@ class TrainingEnv:
                 self.state = copy.deepcopy(tr["state_after"])
                 self.history.append(copy.deepcopy(tr))
                 self._record_progress_action()
-                # exp09 W5 P0 (observation parity): HOLD the counter at 0 --
-                # do NOT increment on ROLL. `meta.training_rolls_this_turn`
-                # (the field `StateVectorEncoderV3._rolls_this_turn_norm`
-                # encodes) is deliberately kept constant 0 so the frozen
-                # `flat_v2` warm-start / KL anchor -- trained counter-blind
-                # (dataset_v2 never populated this field) -- is never queried
-                # out of distribution. `bc_recommender.recommend` holds it at
-                # 0 the same way; see `sap_ppo.visited_guard`'s module
-                # docstring for the full decision + the future counter-aware
-                # path.
+
+
                 _set_training_rolls_this_turn(self.state, 0)
             return {
                 "ok": bool(tr.get("legal")),
@@ -651,8 +516,8 @@ class TrainingEnv:
             _set_last_opponent_team(self.state, parsed_state.get("opponentPets"))
         self.history.append(copy.deepcopy(tr))
         self._reset_turn_guard()
-        # exp09 W5 P0: the counter is held at 0 (see the non-END_TURN branch
-        # above and `sap_ppo.visited_guard`); a new turn starts at 0 too.
+
+
         _set_training_rolls_this_turn(self.state, 0)
         return {
             "ok": True,
@@ -742,18 +607,7 @@ class TrainingEnv:
             if int(state.get("trophies", 0)) >= 7:
                 return True
 
-        # exp09 W5 P0 Fix D (codex finding 4): INCLUSIVE of `max_turn` itself
-        # -- the final turn AT `max_turn` is still playable, matching
-        # `eval_versus_fullgame.py`'s own turn-cap check (that module checks
-        # PRE-advance `turn_played >= max_turn` on the turn whose battle was
-        # just resolved, so its last allowed battle is AT `max_turn`; this
-        # check runs POST-advance, so the equivalent boundary is `>`, not
-        # `>=` -- see that module's own "FIX 5" comment for the exact
-        # before/after-advance distinction). Before this fix the comparison
-        # was `>=`, so the post-advance turn reaching `max_turn` ended the
-        # episode one turn EARLY (last playable turn = `max_turn - 1`) --
-        # for exp09 W5's chain-PPO (`max_turn=30`) that meant training
-        # episodes ran only 29 turns while eval allowed 30.
+
         if max_turn is not None and int(state.get("turn", 1)) > int(max_turn):
             return True
         return False

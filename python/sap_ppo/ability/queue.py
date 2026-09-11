@@ -44,31 +44,9 @@ def sort_ability_events_for_runtime(
 ) -> tuple[list[AbilityEvent], bool]:
     """Order one simultaneous event group and report whether a random tie was used.
 
-    exp13 PLAN Amendment A2.6: an event that resolves to NO HANDLER takes no
-    part in the tie test. `AbilityRuntime.run` resolves such an event by doing
-    nothing to the board at all, so its position in the group cannot change an
-    outcome, and it has no business pulling a random number and forcing the
-    reseed that follows.
-
-    This is where the engine emitted most of its randomness: `RESULTS_W0d.md`
-    measured 87.9% of the resolutions raising `ability_randomness` as groups in
-    which not a single event could resolve a handler, because the engine emits
-    `buy_friend`, `buy_tier1_pet`, `purchase_food`, `friendly_ate_food` and
-    `friend_summoned` for triggers no Turtle pet implements, and then ties them.
-
     The no-handler events are still RETURNED, and still reach the runtime: a
     DECLARED trigger with no implementation is how `unsupported_effect` gets
-    raised, and dropping the event here would silently drop that signal.
-
-    Unlike A2.1 and A4 this DOES change the board a given seed produces. Two
-    legs, both recorded in the amendment: skipping the draw removes the reseed
-    that followed it, which moves `meta.seed` and therefore every later shop
-    roll; and where a group still ties, its real handlers now draw from a
-    different position in the stream, so their order among themselves can move.
-    The first is arithmetic. The second rests on A2 finding 4 -- tie order came
-    back board-, topology- and legal-mask-invariant in 3,106 of 3,106
-    exhaustive permutations and 1,350 of 1,350 alternate-seed replays.
-    """
+    raised, and dropping the event here would silently drop that signal."""
     if len(events) <= 1:
         return list(events), False
 
@@ -112,25 +90,6 @@ def sort_ability_events_for_runtime(
 class AbilityRuntimeContext:
     """Per-resolution scratch space handed to every ability handler.
 
-    `random_used` says a handler consumed a random number.
-    `structural_used` (exp13 PLAN Amendment A2.1) says a handler wrote a field
-    `legal_actions` reads: shop slot `slot_type`/`item_id`/`cost`/`frozen` and
-    the slot count, `gold`, team occupancy/`pet_id`/`level`. The two are
-    independent -- the seven stat-buff callers that route through
-    `effects.add_slot_stats` set the first and not the second, because
-    `legal_actions` never reads attack or health, while a deterministic Pig
-    sell sets the second and not the first.
-
-    `causality` is Amendment A4, as revised after the W1a-3 review. It is the
-    STEP's taint object (`engine.StepCausality`), not this runtime's: the
-    first cut of A4 kept the causal scope here, inside a context that dies with
-    its runtime, and the read-set writes that matter most -- a faint clearing a
-    slot -- happen in `engine._resolve_shop_hurt_faint_chain`, runtimes later.
-    A random stat buff decided who survived and nothing was left alive to say
-    so. So handlers still declare through `effects.mark_random` and
-    `effects.mark_structural`, and those now speak to an object that outlives
-    every runtime in the step.
-
     Handlers declare rather than being named, so a future random effect that
     grants gold or discounts the shop becomes a cut point the day it lands
     (A1 ruling 2: never a whitelist).
@@ -142,8 +101,7 @@ class AbilityRuntimeContext:
     Nested events emitted by a handler are inserted immediately after that
     handler, with the same simultaneous-group ordering and RNG as top-level
     events. This matches synchronous perk-gain food triggers without starting
-    a second runtime or reseeding the state twice.
-    """
+    a second runtime or reseeding the state twice."""
 
     state: dict[str, Any]
     rng: Any

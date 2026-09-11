@@ -1,18 +1,4 @@
-"""Pure battle-outcome -> lives/trophies bookkeeping (exp12 W0).
-
-Until exp12 W0 these rules lived ONLY inline inside
-`end_turn.py::resolve_end_turn_with_sampled_battle`, spread across the two
-sides of its `post_battle_fn` call: the win/loss adjustment before the turn
-advance, the turn-3 recovery after it. That was fine while `end_turn.py` was
-the only thing that ever resolved a versus battle -- exp12's human-reference
-yardstick (`tools/human_vs_pool_reference.py`) is the first consumer that
-scores battles WITHOUT the shop engine (it replays a human's own recorded
-per-turn boards, so there is no engine state to advance and no `end_turn.py`
-call to make), and a second hand-written copy of "who loses a life, and when
-does the turn-3 heal fire" is exactly the kind of silent divergence that
-would make its winrate incomparable with the driver's.
-
-So the rules live here, once, as a pure function over plain ints:
+"""So the rules live here, once, as a pure function over plain ints:
 `end_turn.py` calls it, the human reference calls it, and neither can drift.
 Nothing in this module imports anything from the rest of `sap_ppo` -- it is
 arithmetic over five scalars.
@@ -37,27 +23,7 @@ the old inline block, plus `test_end_turn_runtime.py`'s pre-existing
 advance (`engine.resolve_end_turn_post_battle` does `turn += 1`), because
 that is the state the original inline turn-3 check read. A caller that never
 touches the engine (the human reference) passes `turn + 1` for the turn
-whose battle it just resolved.
-
-exp13 W0a addition -- `max_lives`, and why it is a PARAMETER rather than a
-per-mode constant: exp13's ruler is the REAL arena (5 starting lives, 10
-trophies to complete -- internal design notes D1), where the
-turn-3 heal must cap at 5, the starting value, not at 6. Two different
-frames call this function with `game_mode="arena"` and they do NOT share
-that cap:
-
-- exp13's real-arena ruler (`tools/eval_versus_fullgame.py --game-rules
-  arena`, `tools/human_vs_pool_reference.py --game-rules arena`) passes
-  `max_lives=ARENA_MAX_LIVES` (5);
-- the RL training env's arena episodes (`train/env.py`, whose own terminal
-  rule is 7 trophies -- a different frame entirely) keep the historical cap
-  of 6, because nothing about that frame is being changed here.
-
-So the DEFAULT stays `MAX_LIVES` (6) and every pre-exp13 caller --
-`end_turn.py`'s own default, and through it `TrainingEnv.step` /
-`PlayWebSession` -- is byte-for-byte unaffected; only a caller that asks for
-a different cap gets one.
-"""
+whose battle it just resolved."""
 
 from __future__ import annotations
 
@@ -77,12 +43,7 @@ MAX_TROPHIES = 10
 # turn 2's.
 LIFE_RECOVERY_TURN = 3
 
-# exp13 W0a (PLAN.md D1, "real-arena rules"): the REAL arena starts you on 5
-# lives, and its turn-3 heal therefore caps at 5 -- "cap = the starting
-# value", the same relationship versus has at 6. Named here, next to the
-# versus numbers, so the driver and the human reference read the pair off
-# ONE module instead of each spelling out a 5 (see the module docstring for
-# why this is not the default).
+
 ARENA_START_LIVES = 5
 ARENA_MAX_LIVES = ARENA_START_LIVES
 VERSUS_START_LIVES = MAX_LIVES
@@ -123,15 +84,7 @@ def apply_battle_outcome_to_lives(
     `outcome` is the oracle's discrete verdict (`"win"`/`"loss"`/`"draw"`);
     anything else is treated as a draw (no life moves), matching the inline
     code this replaces -- `end_turn.py` rejects unknown outcomes before it
-    ever gets here, so that branch is defensive only.
-
-    `max_lives` (exp13 W0a, default `MAX_LIVES` = 6 = every pre-exp13
-    caller's behavior): the cap the turn-3 heal restores TOWARD, for both
-    sides. exp13's real-arena ruler passes `ARENA_MAX_LIVES` (5); see the
-    module docstring for why this is a parameter and not keyed off
-    `game_mode`. It caps ONLY the heal -- it never clamps a life total that
-    was already above it, because no rule in this game can raise one.
-    """
+    ever gets here, so that branch is defensive only."""
     mode = str(game_mode or GAME_MODE_ARENA).strip().lower()
     verdict = str(outcome or "").strip().lower()
 

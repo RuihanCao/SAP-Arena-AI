@@ -1,54 +1,5 @@
 """sap_ppo.replay_decode.decode_turn -- replay turn -> state + imitable action chain.
 
-Born as exp08 turn-decode (waves 1-5); moved here in T7 code convergence
-(2026-07-10) as the committed single source of truth. Decodes replay turns
-into per-turn state records with reconstructed shops AND a concrete, imitable
-action chain, and self-validates against the recorded end-of-turn snapshots.
-Uses the proven RNG/crack from .reconstruct_shop (exp02, same package).
-
-SCOPE: wave-2 added T6 on top of wave-1's T3/T2 state reconstruction:
-  * the REAL per-action freeze state (Request.Data.BoardFreezes) replaces
-    wave-1's "frozen-assumed-carry-in" for mid-turn roll reconstruction;
-  * each action is decoded to a concrete op WITH targets (chain below).
-Wave 4 adds:
-  * T5 ability-injected shop foods (Cow/Pigeon/Worm rules, see the constants
-    block) -- deterministic board-driven stocks, now part of the tracked shop
-    state (start_shop["injected"], "ability_stock" chain ops, family-matched
-    buy-membership);
-  * the deeper identity pass: uni-counter block anchoring (anchor_uni_blocks)
-    resolves shop items that never reach a snapshot (bought-then-sold/merged
-    the same turn), tagged identity_src="crossref" on ops.
-The exp09 chaining chunk (2026-07-10) adds on top of wave 4:
-  * the uni-ALLOCATION STREAM: the walk emits, in action order, every drawn/
-    stocked block plus a consumption event for every other counter mint --
-    level-up choice pairs (+2 per level crossed, driven by an EXACT exp
-    tracker: absorb = src exp + 1, chocolate +1, thresholds 2/5, all
-    empirically pinned), pill spawn tokens (species rules + Honey/Mushroom
-    perks), unresolved rolls (draw count still exact), turn boundaries (0).
-    Anything uncertain emits an UNKNOWN event -- an interval exp model
-    (per-pet fuzz + board slop) proves many unknown-target events quiet
-    instead of giving up. Calibration: probe_chain_calibration.py.
-  * CHAINED anchoring (anchor_uni_blocks pass 2): blocks with no snapshot
-    anchor are pinned by double-confirmed counter contiguity (forward AND
-    backward arithmetic from multi-anchor blocks must agree), minting
-    identities for items that never reach any snapshot. Identity coverage
-    75.3% -> 85.9% (CHAIN_ALLOW_1DIR default, Ruihan 2026-07-10): pins
-    confirmed from only ONE direction (~1-2% wrong vs ~0.1% double-confirmed)
-    are included but TAGGED end-to-end (op identity_src="crossref-1dir",
-    *_1dir stat splits) so dataset builds can slice them; strict ablation =
-    flip the flag (78.2%). The 2026-07-11 review-fix batch added: action-type
-    kind evidence as a hard veto (C1), single-anchor off-line re-base/drop +
-    "crossref-1anchor" tagging (C2), a global evidence-strength overlap sweep
-    (C3), never-guess combine targets (C4 cheap half), double-L2 offer
-    suppression (C5), and cross-round tag-provenance unions (C6).
-Tier-up (T4) choice pets remain unreconstructable from replay seeds (RESOLVED
-NEGATIVE, STATUS Findings k): bought ones are identified via board snapshots;
-the unbought option is lost. Their buys still fail buy-membership by design
-(the miss count is the T4 census from the buy side).
-
-T6 FREEZE SEMANTICS (empirically pinned on the 163-game dev cache, 2026-07-09;
-probe history in STATUS.md Findings g):
-
 1. Freezing is NOT an action type. The client batches the current freeze state
    onto the NEXT request of any type: Request.Data.BoardFreezes appears on
    Types 5/6/7/8/9/11 and is a FULL-STATE enumeration of the current shop
@@ -69,37 +20,7 @@ probe history in STATUS.md Findings g):
    had mid-turn frozen carries, i.e. Uni gaps). Slot-level alignment is
    therefore available wherever a block's base Uni is pinned.
 
-CHAIN SCHEMA (records[i]["chain"], ordered): ops are dicts with "op" one of
-  start_turn(seed) | roll(seed) | buy_pet(uni, enu?, to_slot) |
-  move(uni, to_slot) | merge(src_uni, dst_uni, buy_merge, src_enu?) |
-  buy_food(uni, enu, target_uni?) | sell(uni, enu?) | end_turn |
-  freeze(unis)/unfreeze(unis)  [synthesized deltas, emitted BEFORE the request
-                                op that carried the BoardFreezes batch]
-plus optional "board_orders" {uni: slot} on any op (resulting positions of
-displaced board pets, ground truth from Request.Data.BoardOrders; slot = 4-x,
-x omitted means 0 -- same conventions as exp01 replay_audit.py). Identity
-fields (enu) come from the game-wide Uni->Enu map (all snapshots' shop+board
-items + Type-8 responses); "enu": None = unresolved (honest gap, counted).
-
 REMAINING ASSUMPTIONS (read before trusting a record):
-
-2. Turn-1 genesis shop: RESOLVED (T3, wave 5). The opening shop is stored
-   verbatim in the replay's GenesisBuildModel field (a serialized BuildModel),
-   read by genesis_shop_items(); provenance "genesis". It is NOT rolled from
-   any replay-exposed seed -- a brute force over the turn-1 Type-4 seed,
-   MatchId and UserId (all derivations x pre-draw skips 0-40 x opp-shop-first)
-   reproduces it only at chance, so it is a READ, not a crack. Falls back to
-   provenance "genesis-unknown" (pets/foods None) only if the field is absent.
-
-3. Carry-in unknown: if the PREVIOUS turn has no Type-0 Build snapshot, we
-   cannot know what was frozen entering this turn. start_shop then refuses to
-   guess (provenance "unknown-carry", pets/foods left as None) rather than
-   silently reconstructing with a possibly-wrong draw count (capacity minus
-   frozen count depends on knowing the frozen count). The freeze TRACKER
-   starts empty in that case; it self-corrects at the turn's first
-   BoardFreezes batch (full-state semantics), so rolls after that batch are
-   still reconstructed correctly -- rolls before it silently assume an empty
-   frozen carry (same risk profile as wave 1, and rare: 3/25255 turns).
 
 4. Action ordering: CreatedOn is assumed monotonic non-decreasing within a
    turn in the raw Actions array order. This is verified at runtime; any turn
@@ -109,56 +30,7 @@ REMAINING ASSUMPTIONS (read before trusting a record):
 
 5. At most one Type-0 (battle snapshot) per turn is assumed (confirmed on the
    163-game dev cache: exactly 1977 Type-0 actions across exactly 1977 turns).
-   The first Type-0 found in a turn's (chronological) action list is used.
-
-INPUT FORMATS (auto-detected by content, not just filename):
-  1. Manifest dict: gzipped JSON `{game_id: game}}`, game has "Actions": [...].
-  2. Full cache JSONL: gzipped JSON-lines, one `{"id":..., ..., "raw": game}`
-     per line. Verified 2026-07-09 against the just-completed T9 harvest
-     output (raw_replays_turtle_full.jsonl.gz, 2143 games): `raw` has the
-     identical Actions shape as format 1's game dict (same top-level game
-     keys incl. Actions/CreatedOn/..., same per-action Type/Turn/Request/
-     Response/Build/CreatedOn fields) -- no special-casing needed beyond
-     unwrapping "raw".
-
-SELF-VALIDATION BUCKETS (see PLAN.md "Verification methodology"):
-  (a) CLEAN-LAST-ROLL: turn's last shop-affecting action is a ROLL, nothing
-      shop-affecting after it before the end snapshot, no carry-in, no frozen
-      at end -> exact multiset match vs reconstruct(last roll seed). Mirrors
-      exp02 seed_research.harvest_clean_pairs; expect ~96-98%.
-  (b) NO-ROLL START, no carry-in: end snapshot is a sub-multiset of the
-      full-capacity start_shop reconstruction (buys only remove). Expect ~100%
-      on turns >= 2 (probe_t3_startseed.py got 29/29).
-  (c) NO-ROLL START, WITH carry-in: same subset test against the frozen-aware
-      start_shop reconstruction. First empirical measurement of T2.
-  (d) CARRY-IN LAST-ROLL: turn has carry-in, last shop action is a clean ROLL,
-      end-frozen set == carry-in set (no new freeze) -> exact multiset match
-      with the carry-in frozen items prepended. First empirical measurement.
-  (e) FREEZE-CHANGED LAST-ROLL (wave-2/T6): clean last roll but the freeze
-      state CHANGED mid-turn (new freeze after an empty carry, or a carry that
-      shrank/grew) -- every such turn was UNBUCKETED in wave 1. Reconstructs
-      with the TRACKED frozen set at the last roll (identities via the
-      game-wide Uni->Enu map) -> exact multiset match. Turns whose roll-time
-      frozen unis cannot all be resolved to Enus are excluded and counted
-      (note "e-frozen-unresolved").
-
-Buckets (a)-(d) keep their wave-1 definitions and reconstruction inputs
-EXACTLY (regression guard vs the wave-1 numbers); (e) is purely additive.
-
-WAVE-2 CHAIN METRICS (reported, not gated):
-  * freeze-tracking cross-check: tracked end-of-turn frozen unis == snapshot
-    Fro unis (per turn with a snapshot);
-  * buy-membership (PLAN T6's "free correctness cross-check"): every resolved
-    buy_pet/buy-merge enu must be present in the tracked shop multiset at buy
-    time (start/roll reconstruction minus prior buys, frozen carried); same
-    for buy_food. Tier-up/injected buys fail this BY DESIGN (they are not in
-    the rolled shop) -- the miss count is a T4/T5 census from the buy side.
-
-Usage:
-  python -m sap_ppo.replay_decode.decode_turn \
-      [--cache PATH] [--out PATH] [--max-games N] [--report-only]
-(regression gate: python -m sap_ppo.replay_decode.verify)
-"""
+   The first Type-0 found in a turn's (chronological) action list is used."""
 from __future__ import annotations
 
 import argparse
@@ -180,65 +52,27 @@ DEFAULT_CACHE = Path(os.environ.get(
     str(Path(__file__).resolve().parents[3] / "data" / "raw_replays_manifest.json.gz"),
 ))
 
-# Types that can change shop contents (roll/buy-pet/merge/buy-food/sell/discovery).
-# Matches exp02 seed_research.harvest_clean_pairs's definition exactly, so
-# bucket (a) reproduces that experiment's calibrated ~96-98% number.
+
 SHOP_ACTION_TYPES = {5, 6, 7, 8, 9, 10}
 
-# --------------------------------------------------------------------------
-# T5: ability-injected shop foods (wave 4). Rules pinned empirically on the
-# full 2,143-game cache (t5_census/t5_rules_check/t5_semantics_probe, STATUS
-# Findings wave-4): exactly THREE Turtle-pack pets inject items, all
-# deterministic (board-driven, no RNG); Squirrel/Duck only modify prices/stats.
-#   * Cow (15), ON BUY (incl. buy-merge): REPLACES the unfrozen food shop with
-#     2x Milk_cowlevel (49/102/103), free. 582 cow-buy turns: milk buys come in
-#     2s (481x2, 82x4, 12x6); visible leftovers are exactly [Milk, Milk].
-#   * Cow fed a Chocolate (23): also generates 2x ChocolateMilk_cowlevel
-#     (130/131/132), free (13/13 events: 2 chocomilks, Cow present).
-#   * Pigeon (559), ThisSold (selling THE PIGEON itself, NOT any sell / not
-#     start of turn): stocks `level` free BreadCrumbs (139). Authoritative
-#     source = SAP-Calculator turtle/tier-1/pigeon.class.ts (triggers
-#     ['ThisSold'], count = this.level); the full cache agrees (of crumb-buy
-#     turns, 708 sold a Pigeon vs 5 with a Pigeon on board + a non-Pigeon sell;
-#     sold-pigeon-level == crumb count).
-#   * Worm (82), START of turn: stocks 1 DISCOUNTED apple, level-variant:
-#     L1 = plain Apple (0) at 2g (71 Pri=2 apples with Worm vs 6,803 Pri=3
-#     without), L2 = Apple2 (134), L3 = Apple3 (135), also 2g.
-# Level variants have their own Enu -- that is the whole "why so many enums".
+
 COW_ENU, PIGEON_ENU, WORM_ENU = 15, 559, 82
 CHOCOLATE_ENU = 23
 CRUMB_ENU = 139
 MILK_BY_LVL = {1: 49, 2: 102, 3: 103}
 CHOCOMILK_BY_LVL = {1: 130, 2: 131, 3: 132}
 WORM_APPLE_BY_LVL = {1: 0, 2: 134, 3: 135}
-# milk-family food enus, by trigger. Used by the W3a D2 milk-evidence rule
-# (crossref-milk): a fresh Milk-49 (level-1) buy with no resolved Cow stock
-# in the turn is evidence of an unresolved Cow BUY. ChocolateMilk is FED-
-# triggered (chocolate onto a board Cow), not buy-triggered, so it is not a
-# Cow-buy signal on its own.
-MILK_ENUS = set(MILK_BY_LVL.values())            # {49, 102, 103}
-CHOCOMILK_ENUS = set(CHOCOMILK_BY_LVL.values())  # {130, 131, 132}
-# family tag per injected-food enu ("milk"/"chocomilk" buys are matched by
-# FAMILY in the membership check: the variant depends on the cow's level at
-# buy time, which mid-turn merges can shift -- family-matching keeps the
-# check honest without a fragile level tracker).
+
+
+MILK_ENUS = set(MILK_BY_LVL.values())
+CHOCOMILK_ENUS = set(CHOCOMILK_BY_LVL.values())
+
+
 INJ_FOOD_FAMILY = {49: "milk", 102: "milk", 103: "milk",
                    130: "chocomilk", 131: "chocomilk", 132: "chocomilk",
                    139: "crumb", 134: "worm-apple", 135: "worm-apple"}
 
-# --------------------------------------------------------------------------
-# exp09 chaining chunk: uni-counter consumption rules.
-#
-# The uni counter mints sequentially for EVERY new player-side entity: shop
-# draws, ability stocks, level-up choice pairs, board spawns (T6 law 4). The
-# walk therefore emits a per-game "allocation stream": "block" entries are
-# drawn/stocked shop items (contents known from the crack), "consume" entries
-# are counter positions minted by events whose contents never enter the rolled
-# shop (choice pairs, pill tokens) or whose contents are unknown (unresolved
-# rolls). Chained anchoring (anchor_uni_blocks pass 2) walks this stream, so
-# every count below must be EXACT: anything uncertain emits n=None (a chain
-# barrier), never a guess. Counts are calibrated on doubly-anchored block
-# pairs (an internal analysis script, full cache).
+
 PILL_ENU = 92
 FLY_ENU = 30
 RAT_ENU = 57            # faint spawns on the OPPONENT side -- consumption unknown
@@ -266,13 +100,8 @@ NONPERK_SPELLS = {_NAME_TO_SPELL[n] for n in (
 # consume subtypes NOT yet allowed to be chained across even when n is known
 # (pre-calibration hypotheses live here; emptied as the probe validates them)
 CHAIN_BARRIER_WHYS: set = set()
-# Allow pass-2 pins confirmed from ONE direction only (the other side ends at
-# a barrier/game edge). Pair calibration on clean endpoints: ~1-2% wrong
-# (unmodeled rare mints shift the single line undetected), vs ~0.1% for
-# double-confirmed pins. DEFAULT ON per Ruihan's decision (2026-07-10):
-# 1-dir-derived identities are TAGGED end-to-end (op identity_src =
-# "crossref-1dir", membership/xref *_1dir splits) so W3 dataset builds can
-# include/exclude/downweight that slice; flip OFF for a strict ablation.
+
+
 CHAIN_ALLOW_1DIR = True
 
 
@@ -440,9 +269,7 @@ def board_freezes_frozen_unis(req: dict):
 
 
 def board_orders_slots(req: dict) -> dict:
-    """{uni: resulting board slot} from Request.Data.BoardOrders (ground truth
-    for displaced pets; slot = 4 - Point.x, Point omitted means x=0 -- exp01
-    replay_audit.py conventions)."""
+    """Board orders slots."""
     out = {}
     for e in (req.get("Data") or {}).get("BoardOrders") or []:
         if not isinstance(e, dict):
@@ -471,8 +298,7 @@ def consumed_shop_uni(action_type, req: dict):
 
 
 def food_enu_from_response(action: dict):
-    """Type-8 food identity straight from the response
-    (Response.Event.Event.Spell.Enu -- exp01 replay_audit.py convention)."""
+    """Food enu from response."""
     resp = _parse_json_field(action, "Response")
     if not isinstance(resp, dict):
         return None
@@ -567,11 +393,7 @@ def turn_end_snapshot(acts: list):
 
 
 def find_last_clean_roll(acts: list):
-    """(roll_seed, ok). ok is True iff the LAST shop-affecting action in this
-    turn (Types in SHOP_ACTION_TYPES) is a Type-5 ROLL with a valid int seed,
-    and scanning forward from it hits a Type-0 battle snapshot before any
-    other shop-affecting action -- mirrors exp02
-    seed_research.harvest_clean_pairs's "clean pair" definition exactly."""
+    """Find last clean roll."""
     shop_acts = [(i, a) for i, a in enumerate(acts) if a.get("Type") in SHOP_ACTION_TYPES]
     if not shop_acts or shop_acts[-1][1].get("Type") != 5:
         return None, False
@@ -611,11 +433,7 @@ def classify_validation(acts, end_snapshot, turn, carry_status, carry_pets, carr
     """Bucket this turn into a/b/c/d/e (or None = outside self-check scope)
     and check it. Returns {"bucket", "pass", "note", "detail"}; "note"
     explains an unbucketed turn, "detail" is a compact failing example
-    (seed/carry/snap-vs-recon), populated only on a bucketed FAILURE.
-
-    (a)-(d) are wave-1-identical; (e) is the wave-2/T6 lane: clean last roll
-    with a mid-turn freeze CHANGE, reconstructed under the TRACKED frozen set
-    at that roll (last_roll = the walk's last rolls[] entry)."""
+    (seed/carry/snap-vs-recon), populated only on a bucketed FAILURE."""
     if end_snapshot is None:
         return {"bucket": None, "pass": None, "note": "no-end-snapshot", "detail": None}
 
@@ -630,9 +448,7 @@ def classify_validation(acts, end_snapshot, turn, carry_status, carry_pets, carr
     roll_seed, clean_ok = find_last_clean_roll(acts)
 
     def tracked_recon_ok(legacy_pets, legacy_foods, legacy_ok):
-        """pass under the TRACKED roll-time frozen set (wave-2 model), for the
-        (a')/(d') companion metric. None = tracked state unavailable. Equal
-        inputs short-circuit to the legacy outcome."""
+        """Tracked recon ok."""
         if last_roll is None or last_roll.get("seed") != roll_seed or last_roll["unresolved"]:
             return None
         fp, ff = last_roll["frozen_pets"], last_roll["frozen_foods"]
@@ -744,11 +560,7 @@ def snapshot_board_unis(action: dict) -> set:
 
 
 def snapshot_board_pets(action: dict) -> list:
-    """The player's BOARD pets in a Type-0 snapshot as
-    [{"uni","enu","lvl","exp","perk"}] (lvl from Exp: 0-1 -> 1, 2-4 -> 2,
-    >=5 -> 3; exp = absorbed-copy count, key absent means 0; perk = dump.cs
-    Perk value, absent means bare). Used for the T5 start-of-turn injection
-    rules and to seed the walk's exact board tracker (exp09 chaining)."""
+    """Snapshot board pets."""
     build = _parse_json_field(action, "Build")
     bor = build.get("Bor") if isinstance(build, dict) else None
     mins = bor.get("Mins") if isinstance(bor, dict) else None
@@ -759,9 +571,8 @@ def snapshot_board_pets(action: dict) -> list:
         if not isinstance(i, dict):
             continue
         exp = i.get("Exp") or 0
-        # engine slot = 4 - Poi.x (x omitted means 0 = back slot); same
-        # convention as point_to_slot / board_orders_slots, used by the W3a
-        # H4 position tracker seed.
+
+
         slot = 4 - int((i.get("Poi") or {}).get("x") or 0)
         out.append({"uni": item_uni(i), "enu": item_enu(i),
                     "lvl": 1 + (1 if exp >= 2 else 0) + (1 if exp >= 5 else 0),
@@ -813,17 +624,17 @@ def new_membership() -> dict:
         "food_ok_crossref": 0,
         "pet_ok_crossref_1dir": 0,   # subset resolved via ONE-direction chain pins (tagged slice)
         "food_ok_crossref_1dir": 0,
-        "pet_ok_crossref_1anchor": 0,   # subset from order-unvalidated single-anchor
-        "food_ok_crossref_1anchor": 0,  # pins not confirmed by the chained line (tagged)
-        "pet_ok_crossref_position": 0,  # W3a H4: subset resolved via a certain
-        "food_ok_crossref_position": 0, # position mint (combine-target proof)
-        "pet_ok_crossref_milk": 0,      # W3a D2: subset resolved via the milk-
-        "food_ok_crossref_milk": 0,     # evidence Cow mint (crossref-milk)
-        "pet_ok_crossref_crumb": 0,     # W3a D2: subset resolved via the crumb-
-        "food_ok_crossref_crumb": 0,    # evidence Pigeon mint (crossref-crumb)
-        "op_kind_conflict": 0,       # map entry's kind contradicts the action type's
-                                     # implied kind (T6/7/9=pet, T8=food) -> enu=None
-        "food_miss_enu": Counter(),  # residual food-buy misses by enu (attribution)
+        "pet_ok_crossref_1anchor": 0,
+        "food_ok_crossref_1anchor": 0,
+        "pet_ok_crossref_position": 0,
+        "food_ok_crossref_position": 0,
+        "pet_ok_crossref_milk": 0,
+        "food_ok_crossref_milk": 0,
+        "pet_ok_crossref_crumb": 0,
+        "food_ok_crossref_crumb": 0,
+        "op_kind_conflict": 0,
+
+        "food_miss_enu": Counter(),
         "miss_examples": [],
     }
 
@@ -874,27 +685,7 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         pos_stats = Counter()
 
     def id_src(u):
-        """Identity provenance tag for ops resolved via minted identities:
-        "crossref-1dir" marks the one-direction-confirmed slice,
-        "crossref-1anchor" the single-anchor pins never confirmed by the
-        chained line (review C2 -- W3 can include/exclude/downweight both
-        tagged slices), "crossref" the double-confirmed or line-validated
-        mints, None = identity came from a snapshot directly. Tags are the
-        UNION across harvest rounds (review C6): once 1-dir/1-anchor, always
-        tagged, even if a later round re-derives the pin double-confirmed.
-
-        "crossref-position" (W3a H4) marks identities minted by the certain
-        position tracker (a combine PROVES the occupant's -- or the bought
-        pet's -- species); it is the strongest evidence class (a real-game
-        legality proof, not a counter inference) so it wins over the counter
-        tags for a uni resolved by both.
-
-        "crossref-milk" / "crossref-crumb" (W3a D2) mark identities minted by
-        the ability-evidence rules: a fresh Milk-49 stock with no resolved Cow
-        proves an unresolved Cow BUY (crossref-milk); a BreadCrumbs stock with
-        no resolved Pigeon sell proves an unresolved Pigeon SELL (crossref-
-        crumb). Both are game-mechanic proofs (not counter inference), ranked
-        just below the position legality proof and above the counter tags."""
+        """Id src."""
         if u in crossref_position_unis:
             return "crossref-position"
         if u in crossref_milk_unis:
@@ -921,37 +712,23 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
     board = {u: list(ent) + [0] for u, ent in (board_pet_levels or {}).items()}
     board_slop = 0   # unattributed +1-exp absorbs that landed on SOME pet
     placeholder_n = 0
-    # H4 (W3a): exact board POSITION tracker. pos = {uni: engine slot}; a
-    # certainty flag gates identity RECOVERY (§ the combine target IS the drag
-    # slot). Unmodeled displacements POISON certainty -- a Type-6 buy onto an
-    # OCCUPIED slot (insertion pushes neighbours, ~6% of buys), a pill (fainted
-    # target + spawns land at unmodeled slots), an unknown food that could be a
-    # pill -- and a full-board Request.Data.BoardOrders batch (pre-action
-    # full-state positions) RESTORES it. Seeded from the entering board's slots
-    # (previous end snapshot); board_pet_slots=None = entering positions unknown
-    # (no prev snapshot / turn-1 handled as empty+certain) -> never certain, so
-    # recovery stays OFF. The synthetic never-guess tests seed NO slots, so
-    # slot_certain is False and their honest barriers are preserved unchanged.
+
+
     pos = {u: s for u, s in (board_pet_slots or {}).items()}
     slot_certain = board_pet_slots is not None
     pos_mints: dict = {}   # {uni: (kind, enu)} minted from a certain position
 
-    # ---- W3a D2: milk & crumb ability-evidence tracking (see the mint decision
-    # at the end of the walk). A FRESH milk-family/crumb buy whose trigger (a
-    # Cow buy / a Pigeon sell) is unresolved is evidence that the unresolved
-    # buy/sell WAS the Cow/Pigeon. All map-INDEPENDENT (food enu from response).
-    milk_fresh_buys = 0        # fresh Milk-family (49/102/103) buys this turn
-    choco_fresh_buys = 0       # fresh ChocolateMilk (130/131/132) buys
-    milk_variants: set = set() # the Milk enus seen (variant => cow level)
-    cow_stock_fired = False    # a RESOLVED Cow stocked (choco)milk this turn
-    pigeon_stock_fired = False # a RESOLVED Pigeon stocked crumbs this turn
-    plain_null_buys: list = [] # unis of plain buy_pet ops left enu-unresolved
-    sold_this_turn: set = set()       # unis sold (Type-9) this turn
-    unres_sell_unis: list = []        # unis of enu-unresolved sells (Pigeon cand)
-    # crumbs are stocked by the sell then bought AFTER it, so the Type-9 level
-    # gate needs the turn's crumb-buy total up front: pre-count FRESH crumb buys
-    # (map-independent; frozen carry-ins excluded -- they are a prior turn's
-    # Pigeon, not this sell's stock).
+
+    milk_fresh_buys = 0
+    choco_fresh_buys = 0
+    milk_variants: set = set()
+    cow_stock_fired = False
+    pigeon_stock_fired = False
+    plain_null_buys: list = []
+    sold_this_turn: set = set()
+    unres_sell_unis: list = []
+
+
     crumb_buys_total = 0
     for _a in acts:
         if _a.get("Type") == 8 and food_enu_from_response(_a) == CRUMB_ENU:
@@ -965,25 +742,7 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                 return pu
         return None
 
-    # ---- W3a F1 (tracker-1 fix): position-recovery ground-truth vetoes. A
-    # Type-6 orphan buy is only a real combine if the bought copy was CONSUMED
-    # onto `occ`. Two vetoes reject a recovery whose premise is falsified (the
-    # third -- keeping Type-8 Aim targets out of the orphan set -- lives
-    # game-wide in decode_game). Both are re-index-robust (they never compare
-    # dense slot numbers, which re-pack when pets leave):
-    #   (a) LATER-BATCH: the bought uni reappears in a later same-turn
-    #       BoardOrders batch. A consumed combine copy is destroyed and can
-    #       never reappear -> it had a board life (inserted, then removed by an
-    #       unmodeled path e.g. a same-turn pill) -> the recovery is an
-    #       insertion masquerade -> veto. (The naive "occ moved to another slot"
-    #       signal is NOT used: slot indices re-pack on sells/faints, giving 219
-    #       false vetoes of correct recoveries on the cache; uni-reappearance
-    #       has ZERO false vetoes.)
-    #   (b) TRUTH: `occ` is in BOTH the entering and ending snapshot with known
-    #       exp and its exp did NOT rise over the turn -> it absorbed nothing ->
-    #       the claimed combine (which always adds >=1 exp when lvl<3) did not
-    #       happen -> veto. Exp only rises within a turn, so no-rise is
-    #       unambiguous; this exactly mirrors the reviewer's ground-truth check.
+
     _end_snap_a = next((a for a in acts if a.get("Type") == 0), None)
     _end_snap_exp = ({b["uni"]: b["exp"] for b in snapshot_board_pets(_end_snap_a)
                       if b["uni"] is not None} if _end_snap_a is not None else {})
@@ -1004,12 +763,9 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
     chain = []
     rolls = []
     n_freeze_events = 0
-    buy_by_uni = {}   # uni -> buy_pet op, for same-species merge-source back-fill
-    # exp09 chaining: the turn's slice of the uni-ALLOCATION stream, in action
-    # order. "block" = drawn/stocked shop items (contents known); "consume" =
-    # counter positions minted by events whose contents never enter the rolled
-    # shop (level-up choice pairs, pill tokens) or are unknown (unresolved
-    # rolls). n=None means the count itself is unknown -> chain barrier.
+    buy_by_uni = {}
+
+
     stream = []
 
     def emit_block(seq):
@@ -1041,14 +797,7 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         return lv if lv is not None else default
 
     def cow_level(u):
-        """W3a D2 hygiene (review D3): the Cow's level (hence the milk VARIANT)
-        from the exact level INTERVAL -- a single point yields that level, a
-        boundary-straddling interval (or an untracked pet) yields None, so
-        cow_stock_event emits {family}_variant_unknown rather than guessing the
-        exp-lower-bound variant. Zero-incidence on the cache today (every
-        cow-stock target has a determinate level), a behaviour-preserving swap
-        of board_lvl(u, 1) that stops a future fuzzy level from silently
-        picking Milk1."""
+        """Cow level."""
         lr = lvl_range(board.get(u))
         return lr.pop() if lr is not None and len(lr) == 1 else None
 
@@ -1064,15 +813,7 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         board[-placeholder_n] = [enu, 0, perk, 0]
 
     def bump_exp(u, add, dbl2="no"):
-        """Absorb `add` exp (int, or an (lo, hi) interval when the source's
-        own exp is fuzzy) into board pet `u`. Each level boundary crossed
-        (exp 2 / exp 5) makes the engine insert a choice PAIR into the shop --
-        +2 counter values (engine-native offer semantics, exp09 W1). The
-        crossing test runs over the pet's POSSIBLE exp interval x the add
-        interval: only a determinate outcome is emitted, anything else is an
-        unknown event (chain barrier), never a guess.
-
-        dbl2 (review C5): when two LEVEL-2 pets board-merge, the real engine
+        """dbl2 (review C5): when two LEVEL-2 pets board-merge, the real engine
         SUPPRESSES the level-up shop reward (engine.py
         'levelup_reward_suppressed:double_level2_combine') -- the crossing
         mints nothing. "yes" = both sides determinately L2 -> exact 0;
@@ -1201,8 +942,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         if shop[enu] > 0:
             membership[f"{kind}_ok"] += 1
             shop[enu] -= 1
-            if src:   # "crossref" / "crossref-1dir" / "crossref-1anchor" /
-                      # "crossref-position" (W3a H4)
+            if src:
+
                 membership[f"{kind}_ok_crossref"] += 1
                 if src == "crossref-1dir":
                     membership[f"{kind}_ok_crossref_1dir"] += 1
@@ -1234,7 +975,7 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         exactly but content-unknown -- a consume, not a block, so chaining
         survives without guessing an enu."""
         nonlocal shop_foods, cow_stock_fired
-        cow_stock_fired = True   # W3a D2: a RESOLVED Cow stocked (choco)milk
+        cow_stock_fired = True
         if shop_foods is not None:
             ids, unresolved = resolve_frozen_ids(cur_frozen, carry_map, uni_map)
             shop_foods = None if unresolved else Counter(ids["foods"])
@@ -1322,16 +1063,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                     ent = None
                 enu = ent[1] if ent else None
                 src = id_src(u) if ent else None
-                # buy-combine: the bought copy is consumed onto a same-species
-                # board pet, leveling it up (see orphan_combine_unis). The
-                # target is taken ONLY when it is unambiguous (review C4):
-                # exactly one same-species board pet and no placeholder that
-                # could be one (mushroom self-copies keep their species,
-                # Spider tokens are species-unknown; placeholders NEVER become
-                # onto_uni -- their real uni is unknown). Anything else emits
-                # onto_uni=None: the compiler fails that turn loudly
-                # (buy_combine_target_unknown) instead of retaining a guessed
-                # action label. Full Point->slot recovery is W3 (H4).
+
+
                 combine_real: list = []
                 combine_ph: list = []
                 combine_unk: list = []
@@ -1347,15 +1080,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                     # placeholder does.
                     combine_unk = [bu for bu, eb in board.items()
                                    if bu > 0 and eb[0] is None]
-                # H4 (W3a) position recovery: when the slot tracker is CERTAIN
-                # at this action, the drag slot IS the combine target. occ =
-                # the tracked occupant of `slot`. Resolve/mint only when the
-                # occupant is proven consistent with engine legality (same
-                # species, OR its unknown species is PROVEN by the successful
-                # real-game combine, AND it admits level < 3); a contradicting
-                # known species keeps the honest barrier and is counted as a
-                # tracker/species conflict. (Reference tracker + adjudication:
-                # w3a_probe3_postrack.py / w3a_probe4_adjudicate.py -- 376/376.)
+
+
                 occ = None
                 if u in orphan_combine_unis and slot_certain:
                     o = occ_at(slot)
@@ -1381,10 +1107,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                         # was occ's species (engine same-species legality)
                         recov_onto, recov_enu = occ, occ_enu
                         recov_mint = (u, ("pet", occ_enu))
-                # W3a F1 (tracker-1): a position recovery must survive the two
-                # ground-truth vetoes. A falsified premise (bought copy reappears
-                # on the board, or occupant gained no exp) drops back to the
-                # honest barrier below instead of committing a wrong combine.
+
+
                 if recov_onto is not None:
                     _veto = recovery_vetoed(u, recov_onto, act_idx)
                     if _veto is not None:
@@ -1487,16 +1211,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                                         if (None not in lvls and len(lvls) == 1)
                                         else None)
                 elif u in orphan_combine_unis:
-                    # a combine for sure (the uni never reaches board/sell/
-                    # merge) but the bought identity is unknown (e.g. a T4
-                    # choice pet) or its target species is untracked -> the
-                    # absorb is unplaceable. Op stays a buy_pet record (W1
-                    # semantics, no phantom board entry). Stream: if NO
-                    # possible target could cross a level boundary and none
-                    # could be a Cow (milk stock), the mint count is provably
-                    # 0 -- the stray +1 exp is tracked as board-wide slop;
-                    # anything else is an honest barrier. (H4 did not resolve:
-                    # tracker uncertain, slot empty, or both sides unknown.)
+
+
                     if recov_conflict:
                         pos_stats["position_species_conflict"] += 1
                     op = {"op": "buy_pet", "uni": u, "enu": enu, "to_slot": slot}
@@ -1528,8 +1244,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                         board[u] = [enu, 0, None, 0]   # a fresh buy: level 1, bare
                         pos[u] = slot
                         if enu is None:
-                            # W3a D2: an enu-unresolved plain buy is a milk-Cow
-                            # candidate (the classic buy-Cow -> milk -> sell hole)
+
+
                             plain_null_buys.append(u)
                     check_buy("pet", enu, src)
                     if enu == COW_ENU:
@@ -1598,10 +1314,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
             u = (req.get("SpellId") or {}).get("Uni")
             u = int(u) if u is not None else None
             enu = food_enu_from_response(a)
-            # W3a D2 milk evidence: FRESH milk-family buys are map-independent
-            # (food enu from the response). A fresh Milk-49 stock with no
-            # resolved Cow is evidence of an unresolved Cow buy (mint at walk
-            # end). Frozen carry-ins (a prior turn's stock) are excluded.
+
+
             if enu in MILK_ENUS and (u is None or u not in cur_frozen):
                 milk_fresh_buys += 1
                 milk_variants.add(enu)
@@ -1623,12 +1337,9 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                 op["identity_src"] = s8
             check_buy("food", enu, s8)
             if enu == CHOCOLATE_ENU and aim is not None:
-                bump_exp(aim, 1)   # chocolate = +1 exp; may mint a choice pair
-                # W3a D2 hygiene (review D4): read the aim's species from the
-                # BOARD tracker (the same source the unknown-food quiet check
-                # below uses), not uni_map -- one aim-species source for the
-                # whole Type-8 path. Zero-incidence swap (tracker and map agree
-                # on every chocolate-fed Cow on the cache).
+                bump_exp(aim, 1)
+
+
                 aim_ent_b = board.get(aim)
                 if aim_ent_b is not None and aim_ent_b[0] == COW_ENU:
                     # Chocolate fed to a Cow; post-bump level picks the variant
@@ -1694,18 +1405,13 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
             if u is not None:
                 board_unis.discard(u)
                 board.pop(u, None)
-                pos.pop(u, None)   # H4: sold pet leaves its slot
-                sold_this_turn.add(u)   # W3a D2: milk-Cow candidate gate
-            # T5: selling a PIGEON stocks `level` free BreadCrumbs (ThisSold);
-            # deferred so it lands AFTER the sell op in the chain.
+                pos.pop(u, None)
+                sold_this_turn.add(u)
+
+
             if sold_enu == PIGEON_ENU:
-                # W3a D2: for a CRUMB-EVIDENCE minted Pigeon (crossref-crumb),
-                # assert the crumb COUNT (level -> block) only when it is
-                # provable: the sell level is determinate AND every stocked
-                # crumb (= level) is accounted for by fresh buys + end-shop
-                # leftovers. Otherwise mint the SPECIES but keep the count
-                # barrier (crumbs_unknown). A naturally (snapshot) resolved
-                # Pigeon keeps the legacy level->block behaviour unchanged.
+
+
                 if u is not None and u in crossref_crumb_unis:
                     count_ok = (sold_lvl is not None
                                 and crumb_buys_total <= sold_lvl
@@ -1718,13 +1424,13 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
                 else:
                     n_crumb = sold_lvl_op or 1   # legacy artifact count
                     emit_consume(None, "crumbs_unknown")
-                pigeon_stock_fired = True   # W3a D2: a resolved Pigeon stocked crumbs
+                pigeon_stock_fired = True
                 after_op = {"op": "ability_stock", "source": "Pigeon",
                             "family": "crumb", "count": n_crumb, "replaces_foods": False}
             elif sold_enu is None and u is not None:
                 # could be an untracked Pigeon -> crumb consumption unknown
                 emit_consume(None, "sell_species_unknown")
-                unres_sell_unis.append(u)   # W3a D2: crumb-Pigeon candidate
+                unres_sell_unis.append(u)
         elif ty == 11:
             op = {"op": "end_turn"}
 
@@ -1739,10 +1445,7 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         if cu is not None:
             cur_frozen.discard(cu)
 
-    # ---- W3a D2: milk & crumb ability-evidence mints (fed into the rounds
-    # loop like the H4 position mints; on the re-walk the resolved Cow/Pigeon
-    # fires cow_stock_event/the crumb block, turning the previously-silent
-    # milk positions / the sell_species_unknown barrier into real blocks). ----
+
     milk_mints: dict = {}
     crumb_mints: dict = {}
     # MILK: exactly one cow-stock worth of FRESH Milk-49 buys (level-1 variant,
@@ -1755,10 +1458,8 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
         cands = {mu for mu in plain_null_buys if mu in sold_this_turn}
         if len(cands) == 1:
             milk_mints[next(iter(cands))] = ("pet", COW_ENU)
-    # CRUMB: at least one FRESH BreadCrumbs buy with NO resolved Pigeon sell,
-    # and exactly one enu-unresolved SOLD pet (the Pigeon). Species only -- the
-    # crumb COUNT is asserted (or barriered) by the Type-9 gate above on the
-    # re-walk once the species is minted.
+
+
     if (not pigeon_stock_fired and crumb_buys_total >= 1
             and len(set(unres_sell_unis)) == 1):
         crumb_mints[unres_sell_unis[0]] = ("pet", PIGEON_ENU)
@@ -1766,50 +1467,17 @@ def decode_turn_actions(acts: list, turn: int, carry_map: dict, uni_map: dict,
     return {"chain": chain, "rolls": rolls,
             "final_frozen_unis": sorted(cur_frozen), "n_freeze_events": n_freeze_events,
             "stream": stream,
-            # H4 (W3a): position-evidence identities minted this walk
-            # (crossref-position mechanism), the end-of-turn tracked slots and
-            # whether the tracker is still certain (for the postrack holdout).
+
+
             "pos_mints": pos_mints, "final_slots": dict(pos),
             "slots_certain": slot_certain, "pos_stats": pos_stats,
-            # W3a D2: milk/crumb ability-evidence mints (crossref-milk/-crumb)
+
             "milk_mints": milk_mints, "crumb_mints": crumb_mints}
 
-
-# --------------------------------------------------------------------------
-# wave-4 identity pass: anchor uni blocks against the game-wide truth map
-# --------------------------------------------------------------------------
 
 def anchor_uni_blocks(stream: list, uni_map: dict,
                       action_kinds: dict | None = None) -> tuple:
     """Pin each drawn block's base uni against the snapshot-truth map.
-
-    PASS 1 (wave-4, semantics unchanged). Shop Unis are allocated sequentially
-    in draw order (T6 law 4; genesis = pets 1,2,3 + food 4, each roll continues
-    the counter, frozen items keep theirs, level-up choices/injections consume
-    counter values in between). For each reconstructed DRAWN block a base is
-    valid iff EVERY truth entry inside [base, base+len) agrees with the
-    sequence; a unique valid base anchors the block, ambiguous/no-anchor
-    blocks are skipped (counted, never guessed). A base pinned by >=2
-    snapshot unis also validates the block's order; the holdout check drops
-    one anchor, re-anchors on the rest and verifies the dropped identity.
-
-    PASS 2 (exp09 chained anchoring, STRICT double-confirmation). Consecutive
-    stream items are CONTIGUOUS on the uni counter, so the arithmetic line
-    from a MULTI-anchor block extends across consume events with
-    exactly-known counts and through unpinned blocks (their lengths are
-    exact). A block is pinned ONLY when the forward and the backward line
-    BOTH reach it and AGREE -- an unmodeled mint on either side shifts
-    exactly one direction, so disagreement filters error sources the
-    calibration cannot yet name. Single-anchor bases are order-unvalidated
-    (pair calibration shows several % off): they neither source nor reset
-    the line, they only pass length through; where the confirmed line
-    reaches one and DISAGREES it is re-based onto the line (truth+kind
-    agreeing) or dropped, and mints from line-unreached single anchors are
-    tagged "1anchor" (review C2). On top: truth-agreement AND action-kind
-    agreement over the pinned range, a GLOBAL evidence-strength overlap
-    sweep (review C3), and consume entries with n=None (or a why listed in
-    CHAIN_BARRIER_WHYS) as hard barriers. Anything failing any check is
-    skipped and counted, never guessed.
 
     ACCURACY: every chain prediction that lands on an INDEPENDENTLY
     pass-1-anchored block doubles as a holdout -- chain_pred_{pure,counted}
@@ -1827,8 +1495,7 @@ def anchor_uni_blocks(stream: list, uni_map: dict,
     stream entries: {"kind": "block", "seq": [(kind, enu), ...]} |
     {"kind": "consume", "n": int|None, "why": str} (extra tags pass through).
     Block entries are annotated in place with "base"/"src" ("anchor"|"chain").
-    Returns (crossref: {uni: (kind, enu)} for unis NOT in uni_map, stats).
-    """
+    Returns (crossref: {uni: (kind, enu)} for unis NOT in uni_map, stats)."""
     idx = defaultdict(list)
     for u, ent in uni_map.items():
         idx[ent].append(u)
@@ -1868,8 +1535,8 @@ def anchor_uni_blocks(stream: list, uni_map: dict,
              "chain_overlap_evict": 0, "overlap_anchor_dropped": 0,
              "crossref_minted_1anchor": 0, "minted_positions": 0}
 
-    # ---- pass 1: independent per-block anchoring (wave-4, unchanged) ----
-    prev_end = 0    # unis are 1-based and strictly increasing across blocks
+
+    prev_end = 0
     for e in entries:
         if e["kind"] != "block":
             continue
@@ -2029,8 +1696,8 @@ def anchor_uni_blocks(stream: list, uni_map: dict,
                 if f[0] != e["base"]:
                     stats["chain_holdout2_wrong"] += 1
         else:
-            # single-anchor bases vs the double-confirmed arithmetic line:
-            # quantifies the wave-4 order-unvalidated mint risk
+
+
             f, b = fwd.get(id(e)), bwd.get(id(e))
             if f is not None and b is not None and f[0] == b[0]:
                 stats["chain_vs_1anchor"] += 1
@@ -2094,22 +1761,7 @@ def anchor_uni_blocks(stream: list, uni_map: dict,
         if f is None or b is None:
             e["chain_1dir"] = True
 
-    # global overlap sweep (review C3): pinned uni ranges must be strictly
-    # increasing in stream order (the counter is sequential). The old sweep
-    # compared each pin only to the previous SURVIVOR, so contradictory pins
-    # could both survive (217 double-claimed unis, winner = iteration order)
-    # and a stale cursor after a double-evict over-dropped innocent
-    # neighbours. Now: accept pins in EVIDENCE-STRENGTH order into a globally
-    # consistent set -- a candidate must fit strictly between its accepted
-    # stream-order neighbours' uni ranges. Within one strength tier, ANY
-    # mutual contradiction drops EVERY involved pin (verify-round finding,
-    # 2026-07-11: only tier 2 / 1-dir pins can conflict internally, and each
-    # is one independent single-direction inference -- pin COUNT is range
-    # geometry, not evidence, so there is no majority to adjudicate; ~26
-    # events full-cache, negligible coverage). Weaker pins never evict
-    # stronger ones, and a double-confirmed chain pin CAN evict an order-
-    # unvalidated single-anchor pin (review C2's inversion of the old
-    # never-evict-an-anchor rule).
+
     def _strength(e):
         if e.get("src") == "anchor":
             if e.get("multi"):
@@ -2148,10 +1800,8 @@ def anchor_uni_blocks(stream: list, uni_map: dict,
         for i, e in group:                 # rejects vs stronger accepted pins
             if not any(i == fi for fi, _, _, _ in fit):
                 _drop(e)
-        # within-tier contradiction = drop ALL involved pins: independent
-        # 1-dir inferences are one vote each regardless of how many pins
-        # they produced, so no majority exists (conflict DEGREE is range
-        # width, not evidence -- verify-round finding 2026-07-11).
+
+
         involved = set()
         for x in range(len(fit)):
             i1, _, s1, t1 = fit[x]
@@ -2229,34 +1879,16 @@ def run_harvest_rounds(harvest, uni_map: dict, action_kinds: dict | None = None,
     previously-barriered direction (the feedback lane), so 1-dir / 1-anchor
     provenance is accumulated as a UNION across rounds and never upgraded
     (review C6). Stops when the mint count stops growing (typically 2-3
-    rounds).
-
-    `harvest(umap)` may return either `stream` (legacy / test shape) or
-    `(stream, mints)` where mints = {bucket: {uni: (kind, enu)}} -- the W3a
-    evidence buckets "position" (H4 tracker), "milk" and "crumb" (D2 ability
-    evidence). Every bucket's mints are merged into the WALK umap each round
-    exactly like the anchoring crossref (feedback lane; NEVER into the
-    anchoring TRUTH uni_map -- so they never anchor themselves and never
-    perturb the minted_positions==crossref_unis invariant) and their unis
-    accumulate as per-bucket cross-round UNIONs. When `pos_out` is given it is
-    filled with {"<bucket>_crossref", "seen_<bucket>_unis"} for the caller
-    (kept off the 7-tuple return so the existing test signature is unchanged).
-
-    Returns (stream, stream_r1, xref_stats, xref_r1, crossref,
-    seen_1dir_unis, seen_1anchor_unis); xref_stats carries harvest_rounds and
-    the r1_* direct-lane copies (round 1 = no feedback, review C6's
-    direct/feedback holdout split)."""
+    rounds)."""
     stream_r1 = xref_r1 = None
     stream = xref_stats = None
     crossref: dict = {}
-    # W3a evidence buckets (position / milk / crumb): each accumulates its mints
-    # and their seen-unis across rounds, exactly like the anchoring crossref.
+
+
     evidence: dict = {"position": {}, "milk": {}, "crumb": {}}
     seen: dict = {"position": set(), "milk": set(), "crumb": set()}
-    # Expose the (mutable) accumulators to the caller's harvest closure NOW, so
-    # a re-walk can consult a prior round's crumb mints for the Type-9 crumb-
-    # count gate (evidence[name].update / seen[name] |= are in-place, so these
-    # references stay live across rounds).
+
+
     if pos_out is not None:
         for name in evidence:
             pos_out[f"{name}_crossref"] = evidence[name]
@@ -2329,19 +1961,7 @@ def run_harvest_rounds(harvest, uni_map: dict, action_kinds: dict | None = None,
 
 
 def scan_orphan_combines(actions: list):
-    """Game-wide orphan-combine inference + the W3a F1 veto (c) exclusion.
-
-    A Type-6 buy whose Uni never reaches a board snapshot, is never sold
-    (Type 9), and is never a Type-7 endpoint was BUY-COMBINED onto a
-    same-species board pet (the bought copy is consumed -- this is what makes a
-    mid-turn level-up observable without per-action snapshots). BUT a uni that
-    is a Type-8 food AIM was a LIVE board pet: targeted foods hit the board,
-    never a shop item, and a consumed combine copy can never be fed/pilled. So
-    a Type-8 aim uni had an independent board life and must NOT masquerade as an
-    orphan combine -- W3a F1 veto (c). Pills dominate (bought -> PILLED ->
-    fainted same turn -> never snapshots), tracked separately for the counter.
-
-    Returns (orphan_combine_unis, action_kinds, n_excluded_aim,
+    """Returns (orphan_combine_unis, action_kinds, n_excluded_aim,
     n_excluded_pill). action_kinds is the H1 (review C1) per-uni action-type
     kind evidence (T6/T7/T9 = pet, T8 = food; contradictions omitted)."""
     type6_unis, sold_unis, t7_unis, board_unis_seen = set(), set(), set(), set()
@@ -2386,25 +2006,7 @@ def scan_orphan_combines(actions: list):
 
 
 def decode_game(game_id: str, game: dict, pools: dict):
-    """Decode one game's Actions into a list of per-turn records. Returns
-    (records, createdon_violations, game_stats) where game_stats carries the
-    wave-2 chain metrics (freeze-tracking cross-check + buy-membership) plus
-    the wave-4 identity-pass stats ("xref").
-
-    Wave 4 + exp09 chaining run THREE walks: pass A (round 1) under the
-    snapshot-truth uni map harvests the game-wide uni-ALLOCATION stream
-    (drawn/stocked blocks + consumption events); anchor_uni_blocks() pins
-    each block's base uni against the truth map (T6 law 4: unis are
-    sequential in draw order) and CHAINS pinned blocks across exactly-counted
-    consumption to their unanchored neighbours. Round 2 re-walks with the
-    round-1 identities (resolving sold species / frozen unis / pill
-    bystanders, i.e. fewer unknown consumes) and re-anchors -- anchoring
-    truth stays the snapshot map (mints never anchor themselves), though
-    minted consume-COUNTS can unlock a barriered direction, which is why
-    1-dir/1-anchor tags are cross-round unions (run_harvest_rounds, review
-    C6). Pass B re-walks with the final enriched map to produce the records;
-    ops resolved this way carry identity_src="crossref" (tagged variants:
-    "crossref-1dir", "crossref-1anchor")."""
+    """Decode game."""
     actions = game.get("Actions") or []
     by_turn, violations = group_actions_by_turn(actions)
     turns_sorted = sorted(by_turn)
@@ -2418,12 +2020,7 @@ def decode_game(game_id: str, game: dict, pools: dict):
         if u is not None:
             uni_map.setdefault(u, (kind, enu))
 
-    # ---- orphan buy-combines (+ W3a F1 veto (c) exclusion of fed/pilled
-    # false orphans): a Type-6 buy whose Uni never reaches a snapshot, is never
-    # sold, is never a Type-7 source, AND was never a Type-8 food target = it
-    # was BUY-COMBINED onto a same-species board pet (levels it up; the bought
-    # copy is consumed). This is what makes a mid-turn level-up observable
-    # without per-action snapshots. See scan_orphan_combines for the veto. ----
+
     (orphan_combine_unis, action_kinds,
      n_orphan_excluded_aim, n_orphan_excluded_pill) = scan_orphan_combines(actions)
 
@@ -2452,18 +2049,12 @@ def decode_game(game_id: str, game: dict, pools: dict):
                         if i["fro"] and i.get("uni") is not None:
                             carry_map[i["uni"]] = (kind, i["enu"])
 
-        # start-of-turn auto-roll shop (T3; carry-based, freeze state
-        # cannot change during the battle so BoardFreezes adds nothing)
-        # T5: start-of-turn injections from the board ENTERING the turn
-        # (Worm/Pigeon rules; deterministic). Kept SEPARATE from the rolled
-        # foods so buckets (b)/(c) base numbers stay wave-2-identical (the
-        # T5 lift is the "+" companion column); the record + artifact show
-        # rolled ++ injected as the full shop the player saw.
+
         prev_snap_action = next((a for a in by_turn.get(t - 1, []) if a.get("Type") == 0), None)
         start_block = []
-        start_consume = None   # (n|None, why): counter consumption of an
-                               # UNRECONSTRUCTED start shop (contents unknown,
-                               # draw count often still exact -- exp09 chaining)
+        start_consume = None
+
+
         tt = str(shop_tier(t))
         cap_total = pools["pet_capacity"][tt] + pools["food_capacity"][tt]
         if t == 1:
@@ -2509,10 +2100,8 @@ def decode_game(game_id: str, game: dict, pools: dict):
         entering_pets = (snapshot_board_pets(prev_snap_action) if prev_snap_action else [])
         board_pet_levels = {b["uni"]: (b["enu"], b["exp"], b["perk"])
                             for b in entering_pets if b["uni"] is not None}
-        # H4 (W3a): entering-board SLOTS {uni: engine slot}. None = the entering
-        # positions are unknown (no previous end snapshot) -> the walk's slot
-        # tracker starts uncertain and never recovers a target this turn.
-        # Turn 1 is a KNOWN-empty board ({}) -> certain.
+
+
         if prev_snap_action is not None:
             board_pet_slots = {b["uni"]: b["slot"] for b in entering_pets if b["uni"] is not None}
         elif t == 1:
@@ -2520,9 +2109,7 @@ def decode_game(game_id: str, game: dict, pools: dict):
         else:
             board_pet_slots = None
 
-        # W3a D2: crumbs still in the END shop (unbought) -- the Type-9 crumb-
-        # count gate needs it to prove every stocked crumb (= sold Pigeon level)
-        # is accounted for by fresh buys + leftovers before asserting the level.
+
         _end = end_snaps.get(t)
         end_crumb_leftover = (sum(1 for i in _end["foods"] if i["enu"] == CRUMB_ENU)
                               if _end is not None else 0)
@@ -2549,7 +2136,7 @@ def decode_game(game_id: str, game: dict, pools: dict):
         crumb_mints: dict = {}
         board_unis: set = set()
         mem = new_membership()
-        # prior-round crumb mints (live) gate the Type-9 crumb-count assertion
+
         crumb_unis = pos_out.get("seen_crumb_unis", set())
         milk_unis = pos_out.get("seen_milk_unis", set())
         prev_t = None
@@ -2604,30 +2191,22 @@ def decode_game(game_id: str, game: dict, pools: dict):
     full_map.update(crumb_crossref)     # D2: crumb-evidence Pigeon mints (crossref-crumb)
     crossref_unis = set(crossref)
     xref_stats["crossref_unis"] = len(crossref_unis)
-    # tagged slices, UNION across rounds (review C6: a pin that was 1-dir in
-    # ANY round keeps its tag even if a later round re-derives it double-
-    # confirmed -- prior-round mints can unlock the second direction, so the
-    # provenance never upgrades): "crossref-1dir" = one-direction chain pins
-    # (Ruihan 2026-07-10: ship loose but keep the slice separable for W3),
-    # "crossref-1anchor" = order-unvalidated single-anchor pins (review C2).
+
+
     crossref_1dir_unis = seen_1dir_unis & crossref_unis
     crossref_1anchor_unis = (seen_1anchor_unis & crossref_unis) - crossref_1dir_unis
     xref_stats["crossref_chained_1dir"] = len(crossref_1dir_unis)
     xref_stats["crossref_1anchor_cum"] = len(crossref_1anchor_unis)
-    # H4 (W3a): unis whose identity was minted by the certain position tracker
-    # (crossref-position); tagged end-to-end like the counter slices so W3b can
-    # slice them. Kept off the anchoring crossref (invariant untouched).
+
+
     crossref_position_unis = seen_position_unis & set(position_crossref)
     xref_stats["crossref_position_unis"] = len(crossref_position_unis)
-    # W3a F1 (tracker-1) veto (c): orphan-set false positives removed game-wide
-    # (Type-8 aim targets had a board life; pill subset = the dominant faint
-    # path). Vetoes (a)/(b) counts (position_veto_later_batch/position_veto_truth)
-    # ride pos_stats into xref below.
+
+
     xref_stats["orphan_excluded_aim"] = n_orphan_excluded_aim
     xref_stats["orphan_excluded_pill"] = n_orphan_excluded_pill
-    # D2 (W3a): milk-evidence Cow mints (crossref-milk) and crumb-evidence
-    # Pigeon mints (crossref-crumb), tagged end-to-end like the other slices.
-    # Also kept OFF the anchoring crossref (invariant untouched).
+
+
     crossref_milk_unis = seen_milk_unis & set(milk_crossref)
     crossref_crumb_unis = seen_crumb_unis & set(crumb_crossref)
     xref_stats["crossref_milk_unis"] = len(crossref_milk_unis)
@@ -2714,13 +2293,7 @@ def decode_game(game_id: str, game: dict, pools: dict):
             "validation": validation,
         })
 
-    # ---- H4 position-pick HOLDOUT (quality lane, mirrors
-    # w3a_probe4_adjudicate.py; expect ~(376, 0)). On snapshot-adjudicable
-    # ambiguous combines (clean turn; all candidates in prev+end snapshots; a
-    # SINGLE ambiguous combine of that species; a unique exp+1 riser) grade the
-    # slot pick BLIND against the exp-arithmetic truth. Positions are re-tracked
-    # from the pass-B chain here (independent of the walk's tracker) so it is a
-    # genuine cross-check. Not gated -- for the later per-value re-pin phase. ----
+
     snap_pets_by_turn = {}
     for t in turns_sorted:
         a0 = next((a for a in by_turn[t] if a.get("Type") == 0), None)
@@ -2798,24 +2371,7 @@ def decode_game(game_id: str, game: dict, pools: dict):
                 if gained[0] != picked:
                     pos_stats["position_holdout_wrong"] += 1
 
-    # ---- W3a D2 milk & crumb evidence HINDSIGHT-CONSISTENCY lanes (quality
-    # lanes, not gated). These run over the FINAL converged chain: the candidate
-    # set is the ops the full decode (ALL mechanisms) left UNRESOLVED, and the
-    # lane checks that the milk/crumb evidence rule's nominee agrees with the
-    # independently-RESOLVED Cow/Pigeon. This is a consistency check on the
-    # converged chain, NOT a masked blind re-decode: the raw Type-0 snapshot
-    # truth that resolved the surrounding ops is NOT deleted. MILK: for a turn
-    # whose single Cow buy is resolved (its milk stock is the truth), candidates
-    # = the sold unresolved plain buys, plus the Cow iff it was itself a sold
-    # plain buy; wrong iff the unique candidate != the resolved Cow (only
-    # possible when the real Cow was a merge/combine and a DECOY sold plain buy
-    # exists). CRUMB: same shape, resolved Pigeon sell vs the unresolved sells.
-    # Negative controls: fully-explained turns where the production rule (gated
-    # on the trigger being unresolved) must stay silent. (A true production-blind
-    # re-decode is an impossible state -- deleting the Type-0 truth un-resolves
-    # the surrounding ops too -- so rule-fired precision is the production-
-    # relevant measure; see the W3a adversarial-round note, exp08 RESULTS.md
-    # 2026-07-12 appendix.) ----
+
     sold_all_g: set = set()
     for a in actions:
         if a.get("Type") == 9:
@@ -3051,7 +2607,7 @@ def print_report(agg: dict, n_games: int, cache_path) -> None:
           f"WRONG-mint={xr.get('holdout_wrong', 0)} ({_pct(xr.get('holdout_wrong', 0), hn)})  "
           f"(remainder = became ambiguous -> skipped, not wrong)")
     print()
-    print("-- exp09 chained anchoring (double-confirmed uni-counter contiguity) --")
+    print("-- Chained anchoring (uni-counter contiguity) --")
     n, w = xr.get("chain_holdout2", 0), xr.get("chain_holdout2_wrong", 0)
     rn, rw = xr.get("r1_chain_holdout2", 0), xr.get("r1_chain_holdout2_wrong", 0)
     print(f"  DOUBLE-CONFIRM holdout (fwd+bwd agree on a multi-anchor block): "

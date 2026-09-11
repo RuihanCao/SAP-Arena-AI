@@ -1,24 +1,4 @@
-"""exp10 Wave 4.1: a learned-embedding sb3 features extractor for the SAP BC
-policy.
-
-Why this exists (exp10 PLAN.md "Wave 4: emb-bc" section; diagnosis in the
-PLAN's top-level "结论先行"/"逐题诊断" sections, Wave 1b/1c results): the v4
-1993-dim observation (`observation.py::StateVectorEncoderV4`) is 100%
-hand-built one-hot + numeric features, fed straight into a stock sb3
-`FlattenExtractor` (a no-op reshape) followed by a 2x64 MLP
-(`train/policy.py`'s `mlp_extractor`). Every pet/food/equipment identity is
-an orthogonal one-hot column, so the model can never generalize "this pet is
-similar to that one" -- Wave 1b's behavior-metrics probe tied this directly
-to observed mode-collapse (BC's self-play buys mosquito/horse/beaver almost
-exclusively; turn-3 top-1 accuracy is the worst point on the whole per-turn
-curve). This module replaces ONLY the features-extractor stage with slot-wise
-shared encoders over LEARNED embeddings, while leaving the 1993-dim
-observation interface, the `bc_cache_v2` pre-encoded cache, and every
-downstream consumer (env, eval, PPO warm-start) completely untouched -- see
-`train_chain_bc.py::_build_model`'s `--features flat` (default) vs
-`slot_v1`/`slot_attn` wiring.
-
-Two pieces:
+"""Two pieces:
 
 1. `build_observation_layout(mode, max_turn)` -- reconstructs the v4 layout's
    segment boundaries as a plain-int dict, READING every size off a
@@ -70,8 +50,7 @@ Both modules are v4-only by construction (the opponent-context block only
 exists on `StateVectorEncoderV4`); `build_observation_layout` raises loudly
 if asked to build a layout for any other observation mode, rather than
 silently returning a layout that doesn't describe what `SlotEmbeddingExtractor`
-assumes.
-"""
+assumes."""
 
 from __future__ import annotations
 
@@ -239,14 +218,10 @@ def build_observation_layout(mode: str, max_turn: int) -> dict[str, int]:
 
 
 class SlotEmbeddingExtractor(BaseFeaturesExtractor):
-    """sb3 features extractor: shared slot encoders over learned pet/food/
-    equipment embeddings (exp10 W4.1; see module docstring for the "why").
-
-    `layout` must come from `build_observation_layout` (or something with
+    """`layout` must come from `build_observation_layout` (or something with
     the exact same keys/invariants) -- this class trusts its internal
     consistency and only re-checks that `observation_space` actually matches
-    `layout["total"]`.
-    """
+    `layout["total"]`."""
 
     def __init__(
         self,
@@ -322,7 +297,7 @@ class SlotEmbeddingExtractor(BaseFeaturesExtractor):
                 f"summary_end={self._summary_end}!=total={layout['total']}"
             )
 
-        # within-team-slot offsets: pet(68) -> equip(29) -> status(9) -> num(15)
+
         self._t_pet0, self._t_pet1 = 0, team_pet
         self._t_equip0, self._t_equip1 = self._t_pet1, self._t_pet1 + team_equip
         self._t_status0, self._t_status1 = self._t_equip1, self._t_equip1 + team_status

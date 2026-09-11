@@ -1,19 +1,4 @@
-"""Score-distillation objective + group metrics (exp12 route a, wave A3).
-
-`train/vgame_model.py` stays exactly as W1'c left it -- the extractor
-loader, the freeze/clone contract, `VGameHeads`, the 4-dim race bypass and
-both artifact kinds are reused verbatim. What route a changes is the TARGET
-and the CURRENCY, and that is all this module adds:
-
-- the LINK between the rollout teacher's score and the head's output;
-- a within-GROUP pairwise ranking loss, because the currency search needs is
-  within-decision ranking (RESULTS_W1 finding 19), not pooled regression
-  accuracy;
-- the group metrics that early stopping and the gates are decided on.
-
-## The link (documented choice, PLAN A3 leaves it open)
-
-The teacher score is `_rollout_score_candidate`'s own
+"""The teacher score is `_rollout_score_candidate`'s own
 `mean_outcome + 0.01 * mean_lives_diff`. Both terms are STRUCTURALLY
 bounded: `mean_outcome` averages per-repeat values in {0, 0.5, 1}, and
 `mean_lives_diff` averages `player_lives - opponent_lives` with each side in
@@ -28,18 +13,6 @@ We therefore train with a LOGISTIC link on the affinely squashed score:
     predicted score = SCORE_MIN + sigmoid(logit) * (SCORE_MAX - SCORE_MIN)
 
 Why this over plain MSE on the raw score:
-
-1. It reuses the head, the sigmoid serve path and both artifact kinds
-   unchanged, so nothing downstream (`load_vgame_model`, the W2 scorer, the
-   agreement-set harness) needs a new code path -- `p_win` simply now means
-   "the teacher's normalized rollout score", which is monotone in the
-   teacher's own estimate of P(win) and is recorded as such in metadata.
-2. The prediction cannot leave the target's structural range, so a leaf that
-   is later blended with the myopic score or shaded by a pessimism term
-   stays on the scale those knobs were designed against.
-3. Soft-target cross-entropy is the standard distillation loss, and its
-   gradient does not vanish where MSE's does near the boundaries -- and the
-   target mass here IS near a boundary (A2: mean 0.0923, sd 0.1992).
 
 `--link mse` keeps plain MSE on the RAW score available as a sweep option so
 the choice stays falsifiable rather than merely argued; the metrics below
@@ -58,22 +31,7 @@ so there is nothing to learn). The mixing weight is a sweep dimension:
 
     total = link_loss + rank_weight * L_rank
 
-## The metrics
-
-`group_metrics` computes, per decision group, the three quantities the wave
-is judged on, with EXACTLY the tie convention `eval_vgame_gates.
-agreement_metrics` already uses (a pick agrees when its teacher score equals
-the group max, because a tie means the teacher is indifferent):
-
-- top-1 agreement (the early-stop signal and the G2b' gate's quantity);
-- mean per-group Spearman (undefined groups excluded and counted);
-- mean teacher-score regret of the pick.
-
-`top1_chance_with_ties` is the matching chance floor: the probability a
-uniform random pick lands on a teacher-argmax, which is where the
-pre-registered 0.2865 on the W1d agreement set comes from (a plain 1/n would
-say 0.25 and would overstate the model's lift).
-"""
+## The metrics"""
 
 from __future__ import annotations
 
@@ -153,13 +111,7 @@ def pairwise_rank_loss(z: th.Tensor, t: th.Tensor, mask: th.Tensor) -> th.Tensor
 def top1_chance_with_ties(teacher: np.ndarray, group_start: np.ndarray,
                           group_size: np.ndarray) -> Optional[float]:
     """Chance floor of top-1 agreement: the mean, over groups, of
-    (#teacher-argmax candidates / #candidates).
-
-    This is the number a UNIFORM random picker scores, and it is strictly
-    above 1/n whenever the teacher ties -- which it does often enough that
-    the W1d agreement set's floor is 0.2865, not 0.25. Every route-a claim
-    of "above chance" is measured against this.
-    """
+    (#teacher-argmax candidates / #candidates)."""
     fracs = []
     for start, size in zip(group_start.tolist(), group_size.tolist()):
         if int(size) < 2:

@@ -77,10 +77,7 @@ PUBLISHED_SEARCH = {
 # than assumed: a head on a different value scale can silently change search.
 RELEASED_VALUE_TARGET = "mc8_leafmap_trophies"
 
-# The proposer the published configuration ran, and the default when
-# `--bc-checkpoint` is not given. Both public BC aliases use the attention policy;
-# private research defaults remain separate. The value extractor is the same
-# attention checkpoint.
+
 DEFAULT_BC_CHECKPOINT = _artifact_defaults.PLAY_WEB_BC_CHECKPOINT
 
 # Digests of the released model files. The value file has one non-runtime
@@ -93,7 +90,7 @@ DEFAULT_BC_CHECKPOINT = _artifact_defaults.PLAY_WEB_BC_CHECKPOINT
 PUBLISHED_BC_SHA256 = (
     "5ae652854896aa92273523b741c65fe45c10e461adffb7082f853b99221a64cc")
 PUBLISHED_V_SHA256 = "baed69f0956ce88d2bebd886aaab1e5939ae7901eeb58e99ad690897c6a0ac39"
-REFERENCE_EXECUTION_COMMIT = "edc3c7ba9c0d087df4d789f8b86c20f27effc4be"
+RELEASE_VERSION = "0.1.0"
 ARENA_TERMINAL_REASONS = {"player_lives_0", "trophies_10"}
 CI_ITERS, CI_SEED = 5000, 41
 ARENA_RACE_CONVENTION = "const6"
@@ -517,7 +514,7 @@ def main() -> int:
                           "vgame_blend": 0.0, "vgame_pessimism": 0.0, "mc_rerank_k": 0,
                           "game_rules": "arena", "arena_race_convention": ARENA_RACE_CONVENTION,
                           "skip_imagined_validation": args.policy == "search",
-                          "reference_execution_commit": REFERENCE_EXECUTION_COMMIT,
+                          "release_version": RELEASE_VERSION,
                           "bc_checkpoint": args.bc_checkpoint,
                           "vgame_heads": args.vgame_heads,
                           "vgame_extractor": args.vgame_extractor,
@@ -582,7 +579,7 @@ def main() -> int:
             for k, (want, got) in sorted(drift.items()):
                 print(f"    {k}: published={want} here={got}")
         else:
-            print("  configuration: root72/w4/k12 with original BC and b1 value hashes verified")
+            print("  configuration: root72/w4/k12 with the released BC and value model hashes verified")
     result = run_games(policy, args.pool, args.games, seed=args.seed,
                        turn_mode=args.turn_mode)
     rows = result.pop("games")
@@ -611,7 +608,7 @@ def main() -> int:
             "skip_imagined_validation": search,
             "opening_mode": "varied",
             "max_turn": MAX_TURN, "torch_threads": set_to,
-            "reference_execution_commit": REFERENCE_EXECUTION_COMMIT,
+            "release_version": RELEASE_VERSION,
             "release_source": (json.loads(Path("release_info.json").read_text())
                                if Path("release_info.json").is_file() else None),
             "seed": args.seed,

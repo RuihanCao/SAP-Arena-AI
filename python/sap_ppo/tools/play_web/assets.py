@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 ASSET_UI_DIR = ROOT / "assets"
-SAP_CALC_ART = ROOT.parent / "SAP-Calculator" / "SAP-Calculator" / "src" / "assets" / "art" / "Public" / "Public"
+SAP_CALC_ART = ROOT / "third_party" / "SAP-Calculator" / "src" / "assets" / "art" / "Public" / "Public"
 SAP_CALC_ICONS = SAP_CALC_ART / "Icons"
 SAP_CALC_ICONS_SPLIT = SAP_CALC_ICONS / "TextMap-resources.assets-31-split"
 SAP_CALC_FONTS = SAP_CALC_ART.parents[2] / "fonts"
@@ -93,20 +93,20 @@ DEFAULT_SCENE_BACKGROUND = "FieldBuild"
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 _STATIC_ALLOWED_NAMES = {
-    # the shop page (exp14's skin), served at /sandbox
+
     "index.html",
     "app.css",
     "app.js",
-    # exp16 W5: the menu, the duel page and the replays list
+    "sandbox.js",
+
     "landing.html",
     "play.html",
     "replays.html",
     "duel.css",
     "duel.js",
     "replays.js",
-    # exp16 Amendment 6: one wording for the AI's search telemetry, loaded by
-    # BOTH /play and /replays. Missing from this set it 404s, the page still
-    # renders, and only the console says so.
+
+
     "search_telemetry.js",
     # every page carries this one: it is what notices a server restart
     "build_guard.js",

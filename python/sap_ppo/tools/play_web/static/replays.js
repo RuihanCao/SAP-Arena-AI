@@ -10,20 +10,12 @@
   let detailRequest = 0;
   let refreshRequest = 0;
   let initialized = false;
-  // exp16 replay UI (2026-08-20). The human's actions are the ones the reader
-  // just played, so they start HIDDEN and the AI's start shown; only the initial
-  // values move, the toggle mechanism below is untouched. `turnNumbers` backs
-  // the jump control and is rebuilt on every painted game.
+
   let humanActionsHidden = true;
   let aiActionsHidden = false;
   let turnNumbers = [];
   let currentTurnIndex = 0;
-  // exp16 show-value, replayed. Same contract as the live readout in duel.js:
-  // the page refuses to draw a number under a meaning key it does not know, so
-  // a server that grows a third wording cannot ship a number with no sentence
-  // under it. Keys and placeholder are duplicated from duel.js deliberately --
-  // the two pages are separate bundles -- and `check_replays_value.py` asserts
-  // they still agree with the server's own `meaning_for`.
+
   const VALUE_PLACEHOLDER = '--';
   const VALUE_MEANING_KEYS = ['end_of_turn', 'bc_completed'];
   const VALUE_SHORT_MEANINGS = {
@@ -108,12 +100,7 @@
     return turnDetail.get(key);
   }
 
-  /* exp16 Amendment 6. What the AI searched, per turn, readable without
-     opening anything -- the same thing the live page has always shown in its
-     own log, worded by the shared `search_telemetry.js` so the two cannot
-     drift. The raw JSON fold below it is unchanged and still carries
-     everything; this is the part the PLAN's replay contract calls "the main
-     timeline", which a whole JSON block is not allowed to drown. */
+
   function searchRowHTML(turn) {
     const telemetry = window.__SAP_SEARCH_TELEMETRY;
     if (!telemetry) return '';
@@ -132,24 +119,13 @@
     </div>`;
   }
 
-  /* What this GAME was set to, from `ai_version`. Games archived before
-     2026-08-19 carry no completion fields, and the PLAN's replay contract is
-     explicit about that case: say the archive does not have it. Deriving it
-     from `completion_decided > 0` would recover whether it was on but never
-     the width, and half an answer sitting in a number's place is what gets
-     quoted later as the whole one. */
-  /* W11b. Which gear this GAME was played on, from `gear_start`, which
-     `DuelApp` writes once when the game begins. Absent on anything archived
-     before the settings card existed, and said so rather than defaulted: the
-     process default at the time is not evidence of what that game ran. */
+
   function gameGearText(game) {
     const start = (game || {}).gear_start;
     if (!start || !start.gear) return 'unavailable from v1 archive';
     const gear = String(start.gear);
     const width = Number(start.width || 0);
-    if (gear === 'resample-clock') return `${gear} · width ${width} · rest to rerolls`;
-    if (gear === 'measured') return `${gear} · width ${width}`;
-    return `${gear} · width floats`;
+    return `${window.__SAP_SEARCH_TELEMETRY.modeLabel(gear)} · root ${width}`;
   }
 
   function gameDeepeningText(game) {
@@ -172,14 +148,10 @@
       n_segments: turn.n_segments,
       search_used: turn.search_used,
       search_error: turn.search_error,
-      // Amendment 6. These were missing, so the one place a replay could have
-      // said anything about the deepening said nothing about it.
+
       completion_decided: turn.completion_decided,
       completion_divergent: turn.completion_divergent,
-      // W11b. `realised_stochastic_samples` is the gear's treatment-took
-      // reading, and the two counters below are the instruments for silent
-      // loss inside a completion, so a replay can answer both without the
-      // reader having to have been watching live.
+
       realised_stochastic_samples: turn.realised_stochastic_samples,
       extra_sample_levels: turn.extra_sample_levels,
       completion_dropped: turn.completion_dropped,
@@ -311,7 +283,7 @@
     const result = game.winner ? `${game.winner} won` : String(game.end_reason || 'completed');
     const agent = game.agent_name || game.agent || 'unknown AI';
     const agentId = game.agent_id ? ` (${game.agent_id})` : '';
-    const gear = game.gear ? ` · ${esc(String(game.gear))}` : '';
+    const gear = game.gear ? ` · ${esc(window.__SAP_SEARCH_TELEMETRY.modeLabel(game.gear))}` : '';
     return `<b>${esc(stamp)}</b><span>${esc(result)} · ${Number(game.turns || 0)} turns · seed ${esc(game.game_seed)} · ${esc(agent + agentId)} · deepening ${esc(summaryDeepeningText(game))}${gear}</span>`;
   }
 
@@ -390,9 +362,7 @@
     return `<details class="replay-fold"><summary>${esc(label)}</summary>${innerHTML}</details>`;
   }
 
-  // The rule for the whole page (Ruihan, 2026-08-20): gold says what is LEFT.
-  // Not what was spent, not a delta. `start_turn` carries it as `gold`, every
-  // other op as `gold_after`.
+
   function goldLeft(event) {
     const value = event.gold_after == null ? event.gold : event.gold_after;
     return value == null ? '' : ` · gold ${Number(value)}`;
@@ -438,17 +408,7 @@
     return rows.map((item) => itemName(item)).join(', ');
   }
 
-  // buy_pet / buy_combine / sell: one short line a reader can scan, and one
-  // fold holding the slot and the resulting board.
-  //
-  // The tier-up pair is deliberately NOT in that fold (Ruihan, 2026-08-25).
-  // A level-up hands the shop a linked PAIR from the next tier, and one turn
-  // can level up twice, so the pair on screen is not necessarily the pair that
-  // produced the pet bought a few steps later. Folded on `buy_combine` -- the
-  // op that triggers most level-ups -- the first pair was invisible while the
-  // second, landing on a `merge`, was not, and the shop looked like it had
-  // grown a pet from nowhere. Emitted in the same place as the generic branch
-  // below, so every op that triggers a tier up shows its pair inline.
+
   function shortOpHTML(event, op) {
     const tierUp = event.tier_up_triggered ? ' · tier up' : '';
     let headline;
@@ -473,15 +433,7 @@
       + fold(label, `${detail}${afterBoardsHTML(event)}`);
   }
 
-  // The text for the ops whose LAYOUT the display spec left alone -- buy_food,
-  // merge, and anything the archive grows later, ability_stock included.
-  // buy_pet, buy_combine and sell go through `shortOpHTML` instead.
-  //
-  // Ruihan ruled on 2026-08-20 that the gold rule is the whole page's and not
-  // only the rewritten ops': these carry what is LEFT too, and `Δgold` is gone
-  // from the page altogether. The node probe pins that as a COUNT of zero
-  // rather than op by op, which is what stops a delta creeping back into one
-  // op while the others stay clean.
+
   function operationText(event) {
     const gold = goldLeft(event);
     if (event.op === 'buy_food') {
@@ -616,7 +568,7 @@
         <span><b>agent</b> ${esc((game.ai_version || {}).agent_name || (game.ai_version || {}).agent || 'unknown')} <code>${esc((game.ai_version || {}).agent_id || 'unknown')}</code></span>
         <span><b>turn cap</b> ${Number(game.max_turn || 0)}</span>
         <span><b>deepening</b> ${esc(gameDeepeningText(game))}</span>
-        <span><b>gear</b> ${esc(gameGearText(game))}</span>
+        <span><b>mode</b> ${esc(gameGearText(game))}</span>
       </div>
       ${fullPng}
       ${valueHeaderHTML()}

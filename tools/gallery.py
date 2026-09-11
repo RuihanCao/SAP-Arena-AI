@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Render recorded boards without running an agent or simulating battles.
+"""Render saved games with the original, pinned replay-bot Canvas renderer.
 
-Accepts compact bundled `turns` records and evaluate.py's raw `per_turn` records,
-as plain or gzipped JSONL. Pet art comes from the local pinned calculator;
-missing pictures fall back to names. Records keep their original configuration.
+    python tools/gallery.py [--records ...] [--out gallery] [--games N]
 
-    python tools/gallery.py [--records ...] [--out gallery] [--games N] [--art DIR]
+Accepts bundled `turns` and evaluate.py's `per_turn` JSONL (optionally gzipped).
+Rendering never runs an agent or simulates a battle.
 """
 from __future__ import annotations
 
@@ -13,19 +12,13 @@ import argparse
 import gzip
 import html
 import json
-import os
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RECORDS = ROOT / "data" / "gallery" / "w3b_games.jsonl.gz"
-# The layout the README pins: the calculator checkout sits beside this repository.
-DEFAULT_ART = ROOT.parent / "SAP-Calculator" / "SAP-Calculator" / "src" / "assets" / "art" / "Public" / "Public"
-
-TILES = {"art": 0, "by_name": 0, "empty": 0}
 OUTCOME = {"win": "W", "loss": "L", "draw": "T"}
-ROW_BG = {"W": "#e7f6e9", "L": "#fdeaea", "T": "#f0f0f0"}
-ROW_LABEL = {"W": "won", "L": "lost", "T": "drew"}
+REPLAY_OUTCOME = {"W": "win", "L": "loss", "T": "draw"}
 
 CSS = """
 body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 62rem;
@@ -34,65 +27,71 @@ h1, h2 { font-weight: 600; }
 table { border-collapse: collapse; width: 100%; }
 td, th { padding: .45rem .5rem; vertical-align: middle; border-bottom: 1px solid #e3e3e3; }
 th { text-align: left; font-weight: 600; color: #555; }
-.side { display: flex; gap: .3rem; }
-.slot { width: 62px; text-align: center; font-size: 11px; color: #333; }
-.slot img { width: 46px; height: 46px; object-fit: contain; display: block; margin: 0 auto; }
-.ph { width: 46px; height: 46px; margin: 0 auto; border: 1px dashed #b9b9b9; border-radius: 8px;
-      display: flex; align-items: center; justify-content: center; font-size: 9px;
-      color: #666; padding: 2px; overflow: hidden; }
-.stat { color: #444; }
-.item { color: #7a5; }
-.empty { opacity: .28; }
+.replay { display: block; width: 100%; height: auto; }
 .meta { color: #666; }
 a { color: #06663d; }
 """
 
 
-def tile(slot: dict | None, art: Path, out_dir: Path) -> str:
-    if not slot:
-        TILES["empty"] += 1
-        return '<div class="slot empty"><div class="ph">-</div></div>'
-    name = str(slot.get("name") or "?")
-    png = art / "Pets" / f"{name}.png"
-    if not any(c in name for c in ("/", "\\")) and png.is_file():
-        # Relative, and computed WITHOUT resolving symlinks: the page must point at
-        # the reader's own checkout and carry none of the art itself, and a
-        # `resolve()` here would follow a symlinked checkout out of the tree and
-        # bake an absolute machine path into a published page.
-        src = html.escape(os.path.relpath(png, out_dir).replace(os.sep, "/"))
-        TILES["art"] += 1
-        pic = f'<img src="{src}" alt="{html.escape(name)}">'
-    else:
-        TILES["by_name"] += 1
-        pic = f'<div class="ph">{html.escape(name)}</div>'
-    lvl = slot.get("level") or 1
-    item = f'<div class="item">{html.escape(str(slot["item"]))}</div>' if slot.get("item") else ""
-    return (f'<div class="slot">{pic}'
-            f'<div class="stat">{html.escape(str(slot.get("attack")))}/{html.escape(str(slot.get("health")))}'
-            f'{f" L{html.escape(str(lvl))}" if lvl != 1 else ""}</div>{item}</div>')
+def replay_rows(game: dict) -> list[dict]:
+    """Adapt records to the existing calc_rows contract, including board order.
 
+    State/calculator slots run front-to-back; the replay renderer expects
+    back-to-front on BOTH sides (the original _replay_order_* helpers).
+    """
+    def pets(board: list) -> list:
+        if len(board) > 5:
+            raise ValueError("a board must have at most five slots")
+        result = []
+        for slot in board:
+            if not slot:
+                result.append(None)
+                continue
+            level = int(slot.get("level") or 1)
+            result.append({
+                "name": slot["name"], "attack": slot["attack"],
+                "health": slot["health"], "equipment": slot.get("item"),
+                # Legacy example records retain levels, not partial XP.
+                # The adapter hides their unknown XP bars instead of inventing XP.
+                "level": level, "exp": slot.get("exp"),
+                "tempAttack": slot.get("tempAttack", 0),
+                "tempHealth": slot.get("tempHealth", 0),
+            })
+        return list(reversed(result + [None] * (5 - len(result))))
 
-def game_page(game: dict, art: Path, out_dir: Path) -> tuple[str, int]:
     rows = []
-    for t in game["turns"]:
-        left = "".join(tile(s, art, out_dir) for s in t["player"])
-        right = "".join(tile(s, art, out_dir) for s in t["opponent"])
-        bg = ROW_BG.get(t["outcome"], "#fff")
-        rows.append(
-            f'<tr style="background:{bg}">'
-            f'<td>{html.escape(str(t["turn"]))}</td>'
-            f'<td><div class="side">{left}</div></td>'
-            f'<td>{ROW_LABEL.get(t["outcome"], "?")}</td>'
-            f'<td><div class="side">{right}</div></td>'
-            f'<td class="meta">{html.escape(str(t["lives"]))} v {html.escape(str(t["opp_lives"]))}</td></tr>')
+    for turn in game["turns"]:
+        if turn["outcome"] not in REPLAY_OUTCOME:
+            raise ValueError(f"unknown recorded outcome: {turn['outcome']}")
+        lives_after = turn.get("lives")
+        if type(lives_after) is not int:
+            raise ValueError("recorded Arena lives must be an integer")
+        rows.append({
+            "turn": turn["turn"], "outcome": REPLAY_OUTCOME[turn["outcome"]],
+            "opponentName": "Opponent", "playerPets": pets(turn["player"]),
+            "opponentPets": pets(turn["opponent"]),
+            # Released Arena uses one life per loss. Do not let the renderer
+            # infer lives from its separate six-life/turn-three rule.
+            "livesBefore": lives_after + int(turn["outcome"] == "L"),
+        })
+    return rows
+
+
+def game_page(game: dict, png_name: str | None) -> str:
     body = (f'<h1>Game {game["game_index"]}</h1>'
             f'<p class="meta">{html.escape(str(game["turns_survived"]))} turns, '
             f'{html.escape(str(game["trophies"]))} trophies, ended: {html.escape(str(game["end_reason"]))}. '
             f'<a href="index.html">All games</a></p>'
-            '<table><tr><th>turn</th><th>the agent</th><th></th><th>opponent</th>'
-            '<th>lives</th></tr>' + "".join(rows) + "</table>"
-            + ("" if rows else '<p>No turns were recorded before this game stopped.</p>'))
-    return body, len(rows)
+            '<p>The agent is on the left; its opponent is on the right.</p>')
+    if png_name:
+        body += (f'<a href="{png_name}"><img class="replay" src="{png_name}" '
+                 f'alt="Recorded battles for game {game["game_index"]}"></a>')
+        if any("exp" not in s or s["exp"] is None for t in game["turns"]
+               for side in ("player", "opponent") for s in t[side] if s):
+            body += '<p class="meta">These example records retain levels, but not partial XP; unknown XP bars are omitted.</p>'
+    else:
+        body += '<p>No turns were recorded before this game stopped.</p>'
+    return body
 
 
 def page(title: str, body: str) -> str:
@@ -141,6 +140,9 @@ def compact_game(record: dict, catalog: dict) -> dict:
                 "name": pet_names.get(slot["pet_id"], slot["pet_id"]),
                 "attack": slot.get("attack"), "health": slot.get("health"),
                 "level": slot.get("level") or (3 if slot.get("exp", 0) >= 5 else 2 if slot.get("exp", 0) >= 2 else 1),
+                "exp": slot.get("exp"),
+                "tempAttack": slot.get("temp_attack", 0),
+                "tempHealth": slot.get("temp_health", 0),
                 "item": food_names.get(item, item) if item else None,
             })
         opponent = []
@@ -154,6 +156,9 @@ def compact_game(record: dict, catalog: dict) -> dict:
                 "attack": (slot.get("attack") or 0) + (slot.get("tempAttack") or 0),
                 "health": (slot.get("health") or 0) + (slot.get("tempHealth") or 0),
                 "level": 3 if (slot.get("exp") or 0) >= 5 else 2 if (slot.get("exp") or 0) >= 2 else 1,
+                "exp": slot.get("exp", 0),
+                "tempAttack": slot.get("tempAttack", 0),
+                "tempHealth": slot.get("tempHealth", 0),
                 "item": equipment.get("name") if isinstance(equipment, dict) else equipment,
             })
         converted.append({"turn": turn["turn"], "lives": turn.get("lives"),
@@ -197,35 +202,38 @@ def read_games(records: Path, max_games: int | None = None, catalog: dict | None
 
 
 def render_records(records: Path, out: Path, *, max_games: int | None = None,
-                   art: Path = DEFAULT_ART, catalog: dict | None = None) -> dict:
+                   catalog: dict | None = None) -> dict:
     """Render the first N rows in input order, never selecting by outcome."""
-    records, out, art = Path(records), Path(out), Path(art)
+    records, out = Path(records), Path(out)
     if max_games == 0:
         return {"status": "disabled", "games": 0}
     if out.exists() or out.is_symlink():
         raise FileExistsError(f"refusing to overwrite existing gallery: {out}")
     games = read_games(records, max_games, catalog)
-    TILES.update(art=0, by_name=0, empty=0)
+    from sap_ppo.opponents.replaybot_render_bridge import render_replay_image_from_calc_rows
     total_rows = 0
-    links, pages = [], []
+    links, pages, images = [], [], []
     for g in games:
-        body, n = game_page(g, art, out)
-        total_rows += n
+        rows = replay_rows(g)
+        total_rows += len(rows)
+        png_name = f"game_{g['game_index']:03d}.png" if rows else None
+        if rows:
+            rendered = render_replay_image_from_calc_rows(rows, max_lives=5)
+            png = rendered.get("image")
+            if not rendered.get("ok") or not isinstance(png, bytes) or not png.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError(f"game {g['game_index']}: {rendered.get('error') or 'invalid replay PNG'}")
+            images.append((png_name, png))
+        body = game_page(g, png_name)
         name = f"game_{g['game_index']:03d}.html"
         pages.append((name, page(f"Game {g['game_index']}", body)))
         links.append(f'<tr><td><a href="{name}">game {g["game_index"]}</a></td>'
                      f'<td>{html.escape(str(g["turns_survived"]))}</td><td>{html.escape(str(g["trophies"]))}</td>'
                      f'<td class="meta">{html.escape(str(g["end_reason"]))}</td></tr>')
 
-    have_art = art.is_dir()
-    note = ("" if have_art else
-            '<p class="meta"><b>No art found</b> at the pinned SAP-Calculator checkout, so '
-            'every tile shows the pet name instead of its picture. That is the fallback, not '
-            'a failure: no game art is published with this repository.</p>')
     index = (f'<h1>Gallery</h1><p>The first {len(games)} games in the supplied records, '
              'in input order, without selecting wins. These are recorded boards and outcomes; '
              'rendering does not run the agent or replay battles. '
-             f'Source: <code>{html.escape(records.name)}</code>.</p>{note}'
+             f'Source: <code>{html.escape(records.name)}</code>.</p>'
              '<table><tr><th>game</th><th>turns</th><th>trophies</th><th>ended</th></tr>'
              + "".join(links) + "</table>")
     pages.append(("index.html", page("SAP-Arena gallery", index)))
@@ -233,28 +241,29 @@ def render_records(records: Path, out: Path, *, max_games: int | None = None,
     for name, content in pages:
         with (out / name).open("x", encoding="utf-8") as stream:
             stream.write(content)
+    for name, png in images:
+        with (out / name).open("xb") as stream:
+            stream.write(png)
     return {"status": "ok", "index": str(out / "index.html"), "games": len(games),
-            "turn_rows": total_rows, "tiles": dict(TILES)}
+            "turn_rows": total_rows, "images": len(images), "renderer": "sap-replay-bot"}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--records", type=Path, default=DEFAULT_RECORDS)
     ap.add_argument("--out", type=Path, default=ROOT / "gallery")
-    ap.add_argument("--art", type=Path, default=DEFAULT_ART)
     ap.add_argument("--games", type=int, default=None, help="first N input games; default all, 0 disables")
     args = ap.parse_args()
     if args.games is not None and args.games < 0:
         ap.error("--games must be nonnegative")
     try:
-        result = render_records(args.records, args.out, max_games=args.games, art=args.art)
+        result = render_records(args.records, args.out, max_games=args.games)
     except (OSError, ValueError, KeyError, TypeError) as exc:
         print(f"FATAL: gallery rendering failed: {exc}", file=sys.stderr)
         return 2
     if result["status"] == "ok":
         print(f"gallery: {result['games']} games, {result['turn_rows']} turn rows -> {result['index']}")
-        tiles = result["tiles"]
-        print(f"tiles: art={tiles['art']} by_name={tiles['by_name']} empty={tiles['empty']}")
+        print(f"renderer: {result['renderer']}; replay images: {result['images']}")
     else:
         print("gallery: disabled (0 games)")
     return 0

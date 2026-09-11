@@ -1,83 +1,7 @@
-"""exp16 show-value: what the agent thinks a board is worth, without a search.
+"""Read-only board valuations, optionally after a greedy BC completion.
 
-internal design notes. The design's whole point is
-that `/api/infer/recommend` already answers "what would you do", at the price of
-a width-72 search, and that nothing anywhere answers "what do you think of the
-board I built" at a price a human can pay by pressing a button. This module is
-that answer: one encode plus one batched `V` forward, and no search on any path.
-
-## The three numbers and which of them is honest
-
-The design's section 3 table, implemented:
-
-- **B, the value of a finished end-of-turn board.** `V` is defined exactly on
-  end-of-turn afterstates, so scoring one is clean. `complete=False`.
-- **C, the value part-way through a turn, or per action.** A board after one
-  BUY is not an end-of-turn afterstate, so "the value of this action" has no
-  meaning until the turn is finished somehow. The only cheap way to finish it is
-  to let BC play the rest of the turn greedily, which is what exp13's operator
-  does for its own completions. `complete=True`.
-- **A, the agent's own board**, is not a third code path: it is B applied to the
-  AI's own end-of-turn afterstate for a turn whose battle already resolved, so
-  both numbers on the screen come out of this one function on one scale. See
-  `duel_app.value_log_rows` for why it is reconstructed from the archived record
-  rather than read out of the search.
-
-**C's number is not the value of the action, and this module refuses to let a
-caller display it as though it were.** Every response carries `meaning_key` and
-`meaning`, derived from the same `completed` flag that decides which board was
-scored, and `MEANINGS` is keyed so the two cannot be set independently. The
-design calls the label part of the feature rather than decoration; a UI that
-shows the number without it is a failed implementation, so the wording ships
-from the server and `test_exp16_value_probe.py` pins that the flag and the
-wording cannot get out of step.
-
-## What the number is denominated in
-
-`V0`'s head carries exp12's squashed teacher score, which `vgame_scorer`
-unsquashes onto the teacher's own `[-0.06, 1.06]`. That is not a quantity anyone
-can sanity-check by eye, so the trophy scale comes from exp13's frozen
-recalibration curve (internal project notescurves/recalibration_curve_v1.json`,
-merged in PR #105), applied through exp13's OWN loader and evaluator rather than
-a second implementation of isotonic interpolation. The file is sha256-pinned
-here: an edited or half-written curve is refused at load rather than discovered
-later as a scale nobody can explain.
-
-After round 1 a `bellman_trophies` head is natively expected trophies on
-`[0, 10]`, and then the curve is not applied at all -- the branch is on the
-artifact's own `value_kind`, the same string `vgame_scorer` refuses to default.
-An outcome-trained head emits a real probability and has no trophy scale, so it
-reports `trophies: None` with a reason instead of a plausible wrong number.
-
-Neither number is a win probability. The MC continuation that grounds the trophy
-scale is `bc_greedy_to_terminal`, so the honest reading is "trophies from here if
-a BC-level player continues", not "if you continue" and not "if the agent
-continues".
-
-## Where the number is least trustworthy
-
-`V0` was trained on the agent's and the teacher's data; a board a human built is
-out of distribution for it. Two consequences are reported rather than hidden:
-`clamped` says the raw score fell outside the range the curve was fitted on (the
-interpolator clamps, so an off-scale board silently pins to an endpoint
-otherwise), and `x_range` is echoed so the caller can see how far outside.
-
-## The imagination stream
-
-A greedy completion steps the engine, and a ROLL inside it would otherwise draw
-from the board's own seeded stream P -- the stream the real game is about to draw
-from. Completions therefore run on a clone whose `meta.seed` is exp13's derived
-stream S (`honest_frame.imagined_clone`), keyed at `segment_index=-1`, a value no
-driver can produce, so a value probe can never share a stream with a segment the
-agent is actually planning. The caller's state is never mutated.
-
-## Never a search
-
-`ValueProbe` holds the BC recommender and the V scorer and NOTHING ELSE -- it is
-constructed without the `SearchRecommender` on purpose, so "this endpoint never
-runs a search" is a property of what the object can reach rather than a promise
-in a docstring. `test_exp16_value_probe.py` builds one from an agent whose
-`search` attribute raises on any access.
+The response distinguishes a raw score from a calibrated trophy estimate and
+includes the value target and continuation policy. A probe never runs search.
 """
 
 from __future__ import annotations
@@ -92,33 +16,19 @@ from ...api import legal_actions, step as engine_step
 from ..honest_frame import imagined_clone, imagination_seed
 from .agent import build_readonly_models
 
-# RESTATED, NOT IMPORTED, and this is load-bearing. `tools/vgame_scorer.py`
-# imports torch at module scope; `play_web` must start, serve `/sandbox` and
-# answer `/api/state` on a box with no torch and no checkpoints (see
-# `agent.py`'s "WHY TORCH IS IMPORTED INSIDE THE FUNCTION"), and this module is
-# reachable from `http_app`'s route table. So the three strings are declared
-# here and `test_exp16_value_probe.py` asserts they are still equal to
-# `vgame_scorer`'s -- a test may import torch, a route table may not.
+
 VALUE_KIND_PROBABILITY = "probability"
 VALUE_KIND_TEACHER = "squashed_teacher_score"
 VALUE_KIND_TROPHIES = "bounded_trophies"
-#: exp22 W1. A head CARRIED from V0, whose logit still speaks V0's squashed
-#: teacher score, with a FROZEN monotone leaf map lifting it onto trophies.
-#: The map is part of the model, so by the time a value reaches this probe it
-#: is already trophies and the recalibration curve is not applied to it.
+
+
 VALUE_KIND_LEAFMAP = "leafmap_trophies"
 
-# The frozen B_0 curve, merged into `main` by PR #105 on 2026-08-09. Pinned by
-# content, not by path: `load_curve_document` hashes the FILE before parsing it,
-# so a curve edited in place or copied from another experiment is refused here
-# rather than becoming a second trophy scale in circulation.
+
 from ..._artifact_defaults import TROPHY_CURVE_REL_PATH as CURVE_REL_PATH  # noqa: E402
 CURVE_SHA256 = "6edec500ed7ff8bacf68cb8902257b7538816853642da74d55bd12bf8517f3de"
 
-# `honest_frame.imagination_seed`'s `segment_index` for a value probe. The
-# driver's own segment indices start at 0 and count up, so -1 is unreachable by
-# construction and a probe's stream can never coincide with a segment the agent
-# is planning on. Same primitive, not a second key format.
+
 VALUE_PROBE_SEGMENT_INDEX = -1
 
 END_TURN = "END_TURN"
@@ -147,8 +57,8 @@ MEANINGS: dict[str, str] = {
 # this endpoint's reason for existing is on the wire rather than in a comment.
 NO_SEARCH_NOTE = (
     "no search: one BC greedy completion per completed board, then one batched "
-    "V forward over all of them. /api/infer/recommend is where search-quality "
-    "numbers come from."
+     "V forward over all of them. This is not a search score."
+
 )
 
 
@@ -201,14 +111,8 @@ def meaning_for(completed: bool) -> tuple[str, str]:
 
 
 def load_pinned_curve(repo_root: Path) -> dict[str, Any]:
-    """exp13's frozen curve, loaded by exp13's own loader, hash-pinned.
+    """Load pinned curve."""
 
-    Deliberately not `allow_unpinned`: this module is not a label path, but a
-    number on Ruihan's screen has the same problem an unattributable label has
-    -- it can only be traced to a path, and a path is what a rerun six weeks
-    later gets wrong.
-    """
-    # Call-time import: the recalibration curve is experiment tooling that the public release does not ship.
     from ..w1_recalibration_curve import load_curve_document
 
     path = Path(repo_root) / CURVE_REL_PATH
@@ -267,11 +171,8 @@ class ValueProbe:
         this returns has no way to reach a search even by accident.
 
         By default it loads its OWN (BC, V) pair from the agent's pinned
-        checkpoints rather than borrowing the ones the search is using. That is
-        not caution, it is a measurement: sharing them made one seeded duel panel
-        play three different games (see `agent.build_readonly_models`). Same
-        paths, so the identity below is still the honest identity of what
-        produced the number.
+        checkpoints to avoid races with the search worker's decoder settings.
+        The identity below records the models used to produce the value.
 
         `share_models=True` exists for tests that supply a scripted agent and
         have nothing to load.
@@ -362,7 +263,7 @@ class ValueProbe:
                 "units": "trophies",
                 "range": trophy_range,
                 "note": (
-                    "this head speaks V0's squashed teacher score and a FROZEN "
+                    "this head outputs a squashed teacher score and a fixed "
                     "monotone map carried in the artifact lifts it onto trophies, "
                     "so the value that reaches this panel is already trophies. "
                     "The recalibration curve is NOT applied on top: that would "
@@ -593,7 +494,7 @@ class ValueProbe:
                     "key": "sha256(engine_seed, turn, segment_index, sample_r)",
                     "segment_index": VALUE_PROBE_SEGMENT_INDEX,
                     "note": (
-                        "completions run on exp13's derived stream S at a "
+                        "completions run on an independent simulation stream at a "
                         "segment index no driver can produce, so a probe never "
                         "shares a stream with a segment the agent is planning"
                     ),

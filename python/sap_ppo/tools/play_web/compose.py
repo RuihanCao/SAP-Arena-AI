@@ -1,6 +1,4 @@
-"""exp16 W4: server-side compositions of engine actions.
-
-The engine restricts `BUY_PET` to the FIRST empty team slot
+"""The engine restricts `BUY_PET` to the FIRST empty team slot
 (`engine._legal_buy_pet` -> `unsupported_buy_pet_target`), and
 `engine.legal_actions` only enumerates `REORDER` permutations of OCCUPIED
 slots, so "buy into slot 4" and "drag my pet onto an empty slab" are both
@@ -45,8 +43,7 @@ states x 425 (buyable pet, empty target) pairs before this module existed:
 
 The group is applied all-or-nothing by `apply_group` below, which both
 `play_web/app.py::App` and `play_web/duel.py::DuelSession` call, so the two
-surfaces cannot drift on what "atomic" means.
-"""
+surfaces cannot drift on what "atomic" means."""
 
 from __future__ import annotations
 

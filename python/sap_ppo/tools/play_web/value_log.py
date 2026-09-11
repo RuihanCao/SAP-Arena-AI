@@ -1,14 +1,4 @@
-"""exp16 show-value: the predicted-versus-realised log, one row per turn.
-
-`DESIGN_show_value.md` section 6 and acceptance 5. The number this feature puts
-on the screen is least trustworthy exactly where a human will look at it: `V0`
-was trained on the agent's and the teacher's data, and a board a human built is
-out of distribution for it. That is a reason to build the feature so the
-disagreement is VISIBLE, not a reason to skip it -- and the duel already knows
-the ground truth for the boards it plays, so the record costs nothing beyond
-writing it down.
-
-## What a row is
+"""## What a row is
 
 One per resolved turn, written as the turn resolves:
 
@@ -19,29 +9,7 @@ One per resolved turn, written as the turn resolves:
   means something;
 - who actually won that battle.
 
-At the end of the game one FINAL row carries the realised return-to-go for every
-turn: `final human wins - human wins before that turn`, the same quantity
-`w1_readouts.return_to_go_points` fits the recalibration curve against. That
-makes the log a calibration set on human boards, which is a question nothing
-else currently answers (exp13's R.4 proposer probe will answer it only for
-MC8-scored human chains, never for live play).
-
-## Append-only, and outside the archived game
-
-Rows are appended as they happen and never rewritten, so a SIGKILL mid-game
-leaves every resolved turn on disk. The file lives beside the archive rather
-than inside `games/<id>/`, and that is not tidiness: `DESIGN_show_value.md`
-acceptance 4 requires that turning this display on changes NO recorded game, and
-a checker that hashes a game directory would see a new file as a changed game.
-The archive is left byte-identical; the log is a second artifact next to it.
-
-## Not a results document
-
-`DESIGN_show_value.md` section 7: nothing here may be quoted as evidence about
-`V`'s quality. It is a calibration LOG, gathered on whatever boards Ruihan
-happened to build, with no pinned pool and no sample-size discipline. The pinned
-rulers are what strength claims come from.
-"""
+## Append-only, and outside the archived game"""
 
 from __future__ import annotations
 
@@ -51,7 +19,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "exp16_value_log_v1"
+SCHEMA_VERSION = "value_log_v1"
 
 ROW_TURN = "turn"
 ROW_FINAL = "final"

@@ -50,16 +50,8 @@ FOOD_STAT_BUFFS = {
     "food-chocolate-milk3": (3, 0),
     "food-pear": (2, 2),
     "food-cupcake": (3, 3),
-    # Canned food grants +1/+1 too, and Ruihan ruled on 2026-08-13 that it
-    # counts as a stats food for Cat.  It is priced HERE rather than in a table
-    # of its own because this table is what `_food_effect_stats` reads into the
-    # pending-food context, and that context is the only channel through which
-    # Cat's multiplier can reach a food's value.  Its stats land on the SHOP
-    # pets and on the persistent shop-pet bonus rather than on a team pet: the
-    # target set is decided by `NO_TARGET_FOODS` below (which gives it no
-    # targets at all) and never by membership here, and `engine.py`'s BUY_FOOD
-    # path short-circuits into its own branch before the per-target loop that
-    # tests `item_id in FOOD_STAT_BUFFS`.
+
+
     "food-canned-food": (1, 1),
 }
 
@@ -100,12 +92,7 @@ NON_ROLLABLE_PET_IDS = {
     "pet-honey-bee",
 }
 
-# Sloth (MinionEnum 71) is the easter-egg pet: it is NOT a uniform member of the
-# tier-1 pool. The real game (reverse-engineered in exp02, ghidra RandomizeShop)
-# draws once per shop roll and, only if that draw < SLOTH_ROLL_PROB, replaces the
-# first freshly-rolled pet slot with Sloth (a vanilla 1/1 with no ability).
-# So it must be excluded from every uniform roll/reward pool and injected
-# separately at this rate, never picked like a normal tier-1 pet.
+
 SLOTH_PET_ID = "pet-sloth"
 SLOTH_ROLL_PROB = 1e-4
 
@@ -123,7 +110,7 @@ EQUIPMENT_FOOD_IDS = {
     "food-birthday-cake",
 }
 
-# Canonical status tags associated with specific equipment foods.
+
 EQUIPMENT_STATUS_BY_FOOD_ID: dict[str, str] = {
     "food-honey": "status-honey-bee",
     "food-meat-bone": "status-bone-attack",

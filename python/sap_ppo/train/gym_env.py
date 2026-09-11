@@ -25,26 +25,11 @@ _EARLY_BOARD_FILL_BONUS_TURNS = {1, 2}
 
 REWARD_MODE_LEGACY = "legacy"
 REWARD_MODE_PBRS_V1 = "pbrs_v1"
-# exp09 W5 (PLAN.md Rev 5 "W5 reward", Ruihan-approved): the WHOLE trained
-# reward is the versus lives outcome -- per-turn lives / opponent-lives delta
-# plus a terminal win/loss term. NO shaping of any kind in this mode: PBRS,
-# every legacy bonus/penalty, and `illegal_term` are all deliberately absent
-# (the engine-true mask + visited-state guard subsume what they were for).
-# The KL(pi||pi_BC) leash is NOT a reward term either -- it lives in the LOSS
-# (`train/kl_ppo.py::KLAnchoredMaskablePPO`), keeping this reward purely the
-# game outcome.
+
+
 REWARD_MODE_VERSUS_LIVES = "versus_lives"
-# exp09 W5 Rev 6 (PLAN "W5 continuation", the reward AMENDMENT): same as
-# versus_lives EXCEPT the per-END_TURN lives-outcome term is replaced by the
-# k-sim EXPECTED outcome of the fought battle, (playerWins - opponentWins)/k
-# from ONE oracle call with simulationCount=k (optionally minus the same-k
-# noop baseline: the turn-START board vs the same opponent). The TRANSITION
-# still advances by the single real battle draw -- game rules and the lives
-# race are untouched; only the reward is de-noised (at ~10% battle winrate
-# the single draw is mostly coin-flip noise). k=1 without baseline converges
-# to versus_lives' >=-valued term in expectation. The JS oracle has no seed
-# control, so baseline pairs are unpaired k-sim means (CRN-style variance
-# reduction, not true common random numbers).
+
+
 REWARD_MODE_VERSUS_LIVES_KSIM = "versus_lives_ksim"
 REWARD_MODE_CHOICES = (
     REWARD_MODE_LEGACY,
@@ -57,25 +42,12 @@ DEFAULT_VERSUS_TURN_SCALE = 1.0
 DEFAULT_VERSUS_TERMINAL_SCALE = 5.0
 DEFAULT_KSIM_K = 16
 
-# exp10 W5.3 reward surgery (PLAN.md "W5.3 reward 手术", Ruihan approved
-# 2026-07-26): how the versus dense per-END_TURN payment is priced on turns 1
-# and 2.
-#   full  -- legacy/default: every turn pays turn_scale * (p_hat - q_hat).
-#            Bit-identical to the pre-W5.3 behavior.
-#   stake -- B-lite: turns 1 and 2 pay turn_scale * 0.5*(p_hat+q_hat) *
-#            (p_hat - q_hat) instead. Rationale: the turn-3 life recovery makes
-#            turns 1-2 a JOINT gate (only back-to-back wins actually take a
-#            life, p1*p2; only back-to-back losses actually lose one, q1*q2;
-#            anything with a draw in it nets zero), so the true stake over the
-#            pair is p^2 - q^2 = (p+q)(p-q). Paying half of that per turn makes
-#            the two turns' expected sum match the real stake, instead of
-#            over-paying an outcome the game then refunds.
-# Turns >=3 are untouched in BOTH modes.
+
 VERSUS_TURN12_MODE_FULL = "full"
 VERSUS_TURN12_MODE_STAKE = "stake"
 VERSUS_TURN12_MODE_CHOICES = (VERSUS_TURN12_MODE_FULL, VERSUS_TURN12_MODE_STAKE)
 DEFAULT_VERSUS_TURN12_MODE = VERSUS_TURN12_MODE_FULL
-# The turns the joint turn-3-recovery gate spans (see above).
+
 VERSUS_TURN12_STAKE_TURNS = (1, 2)
 
 
@@ -92,14 +64,7 @@ def normalize_versus_turn12_mode(
 
 
 class KsimFought(NamedTuple):
-    """One fought battle's k-sim aggregation (exp10 W5.3): the reward term AND
-    the win/loss/draw shares it was computed from.
-
-    The EV scalar alone is not enough for the W5.3 `stake` pricing, which needs
-    `p_hat + q_hat` (the probability the battle moves a life at all) on top of
-    `p_hat - q_hat` (the EV). The k rollouts already produce all three counts,
-    so they are carried out of the aggregation rather than recomputed.
-    """
+    """Ksimfought."""
 
     term: float
     player_wins: int
@@ -112,13 +77,10 @@ class KsimFought(NamedTuple):
 
 
 def ksim_turn12_stake_scale(*, p_hat: float, q_hat: float) -> float:
-    """exp10 W5.3 `stake` factor for turns 1-2: `0.5 * (p_hat + q_hat)`.
-
-    Multiplying the plain EV term `turn_scale * (p_hat - q_hat)` by this gives
+    """Multiplying the plain EV term `turn_scale * (p_hat - q_hat)` by this gives
     `turn_scale * 0.5 * (p_hat + q_hat) * (p_hat - q_hat)`, i.e. half the real
     two-turn stake `(p+q)(p-q)`. Draws are absorbed automatically: they enter
-    neither p_hat nor q_hat, so a draw-heavy battle prices near zero.
-    """
+    neither p_hat nor q_hat, so a draw-heavy battle prices near zero."""
     return 0.5 * (float(p_hat) + float(q_hat))
 
 
@@ -455,44 +417,14 @@ def _reward_terms_from_transition_versus_lives(
     turn_scale: float,
     terminal_scale: float,
 ) -> tuple[dict[str, float], dict[str, float]]:
-    """exp09 W5 reward (PLAN.md Rev 5 "W5 reward" section, the WHOLE reward):
-
-    - `lives_outcome_term` = turn_scale * ((opponent lives lost) - (own lives
+    """- `lives_outcome_term` = turn_scale * ((opponent lives lost) - (own lives
       lost)) across this transition. Lives only move inside END_TURN's battle
       resolution (including the turn-3 recovery, which enters symmetrically as
       a negative "loss"), so every non-END_TURN action's reward is exactly 0
       without any action-type special-casing.
     - `terminal_term` = +terminal_scale when the game ends with the opponent
       at 0 lives, -terminal_scale when it ends with the player at 0. An
-      episode ended by the 30-turn cap (nobody at 0) gets 0.
-
-    NO other term exists in this mode -- no illegal_term (masked training
-    cannot select an illegal action; a rejected raw step leaves the state
-    unchanged, so the deltas are 0 anyway), no board-floor / action nudges,
-    no PBRS. Proxy metrics stay monitoring-only per the CLAUDE.md guardrail.
-
-    exp10 W5.W1 telemetry-truth fix: this function's `lives_outcome_term`
-    IS the raw single-draw battle result in `versus_lives` mode, but under
-    `versus_lives_ksim` the caller (`SapPpoGymEnv.step`) OVERWRITES it with
-    the k-sim shaped winrate-vs-noop-baseline term -- a meaningful training
-    signal but NOT a battle outcome (it can read ~0.9 for a policy that is
-    losing every real battle, since it is scored against doing nothing, not
-    against winning). `step()` therefore also snapshots THIS function's raw
-    value (captured before that overwrite) into
-    `info["reward_terms"]["lives_raw_term"]` -- inserted AFTER the reward
-    sum so it never contributes to the trained reward -- so telemetry
-    (`train_ppo.py::_accumulate_battle_event`) can bucket the TRUE battle
-    win/loss regardless of reward_mode shaping. See `step`'s own comments
-    for the exact mechanism; this function's own return value is unchanged
-    by that fix.
-
-    exp10 W5.3: that snapshot now reads this function's
-    `reward_debug["versus_raw_lives_delta"]` -- the same single-draw outcome
-    with the turn_scale weight left OFF -- so the telemetry survives
-    turn_scale=0 (the W5.3 sparse arm), where the weighted term is
-    identically 0 and would erase every win/loss from the buckets. Nothing
-    about the trained reward changes.
-    """
+      episode ended by the 30-turn cap (nobody at 0) gets 0."""
     prev_own = _safe_int(prev_state.get("lives"), 0)
     curr_own = _safe_int(curr_state.get("lives"), 0)
     prev_opp = _versus_opponent_lives(prev_state, default=0)
@@ -509,13 +441,8 @@ def _reward_terms_from_transition_versus_lives(
         "versus_curr_opponent_lives": float(curr_opp),
         "versus_turn_scale": float(turn_scale),
         "versus_terminal_scale": float(terminal_scale),
-        # exp10 W5.3: the SAME single-draw outcome as `lives_outcome_term`
-        # below, but WITHOUT the turn_scale weight -- this is what `step()`
-        # publishes as `lives_raw_term` telemetry. Un-weighting matters at
-        # turn_scale=0 (W5.3's pure-sparse arm): the weighted term is 0 for
-        # every battle there, which would make `train_ppo.py`'s
-        # `_accumulate_battle_event` (sign-based) bucket every real win AND
-        # every real loss as neither, silently reporting 0 wins / 0 losses.
+
+
         "versus_raw_lives_delta": 0.0,
     }
 
@@ -849,17 +776,12 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
             self.pbrs_enable_aux = bool(pbrs_enable_aux)
             self.versus_turn_scale = float(versus_turn_scale)
             self.versus_terminal_scale = float(versus_terminal_scale)
-            # exp09 W5 Rev 6 (ksim reward): k sims per fought battle, optional
-            # noop baseline vs the turn-START board, injectable battle fn for
-            # tests (None -> the real oracle, imported lazily on first use).
+
+
             self.ksim_k = max(1, int(ksim_k))
             self.ksim_noop_baseline = bool(ksim_noop_baseline)
-            # exp10 W5.3: `stake` prices turns 1-2 as HALF the joint two-turn
-            # stake, which is only the right quantity when the dense term is
-            # the absolute EV p_hat-q_hat. With the noop baseline on, the term
-            # is a DIFFERENCE of two EVs (fought minus do-nothing), so
-            # p_hat+q_hat no longer describes it -- refuse the combination
-            # loudly instead of silently training on a meaningless product.
+
+
             self.versus_turn12_mode = normalize_versus_turn12_mode(versus_turn12_mode)
             if self.versus_turn12_mode == VERSUS_TURN12_MODE_STAKE and self.ksim_noop_baseline:
                 raise ValueError(
@@ -889,16 +811,8 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
                 "turn": _safe_int(self.core_env.state.get("turn"), 1),
                 "acc": {},
             }
-            # exp09 W5 P0: this gym env's OWN episode counter, threaded into
-            # `core_env.reset(episode_index=...)` on every reset (see that
-            # method's docstring) so a versus-mode `ChainSnapshotSource`
-            # provider advances to the next deterministic followed-pid each
-            # episode, matching the eval frame's `initial_pid_for_game`
-            # convention. Kept on THIS wrapper (not just relying on
-            # `core_env`'s own internal fallback counter) so the public
-            # `reset(*, seed=None, options=None)` signature stays exactly
-            # the standard `gymnasium.Env` contract SB3's VecEnv/wrappers
-            # expect -- no new public kwarg here.
+
+
             self._episode_index = 0
 
         def reset(self, *, seed: int | None = None, options: dict[str, Any] | None = None):
@@ -916,16 +830,7 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
             return obs, info
 
         def _ksim_estimate(self, fought_config: dict[str, Any]) -> KsimFought | None:
-            """k-sim expected lives outcome for the battle that just resolved.
-
-            Returns a `KsimFought` (reward term + the win/loss/draw shares it
-            came from, exp10 W5.3 -- the `stake` pricing needs p_hat+q_hat,
-            not just the EV) or None when the oracle call fails (the caller
-            falls back to the single-draw term -- training must never crash
-            over a flaky oracle call). One oracle call per side (fought board;
-            optionally the turn-start noop board), each with
-            `simulationCount=k` so the k sims run inside a single node call.
-            """
+            """k-sim expected lives outcome for the battle that just resolved."""
             fn = self._ksim_battle_fn
             if fn is None:
                 from ..oracles.sap_calc_battle_oracle import run_battle_oracle_with_config
@@ -940,11 +845,8 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
                 return None
             p_wins = _safe_int(result.get("playerWins"), 0)
             o_wins = _safe_int(result.get("opponentWins"), 0)
-            # exp10 W5.3: draws are a first-class third outcome here (they cost
-            # nobody a life), so carry them out of the aggregation instead of
-            # letting them vanish into "not a win". The oracle reports them
-            # directly; the k - p - o fallback covers a payload that omits the
-            # key.
+
+
             if result.get("draws") is None:
                 draws = max(0, int(self.ksim_k) - p_wins - o_wins)
             else:
@@ -1035,32 +937,15 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
                 versus_terminal_scale=float(self.versus_terminal_scale),
             )
             info = dict(out.get("info", {}))
-            # exp10 W5.W1 telemetry-truth fix: snapshot the RAW (un-shaped)
-            # single-draw battle outcome for the versus reward modes BEFORE
-            # the ksim overwrite below can replace `lives_outcome_term` with
-            # the k-sim shaped winrate-vs-noop-baseline term. Held in a local
-            # (NOT yet on `reward_terms`) so it can be attached to
-            # `info["reward_terms"]` AFTER the reward sum a few lines down
-            # without ever contributing to the trained reward itself --
-            # see `_reward_terms_from_transition_versus_lives`'s docstring
-            # for why this exists (train_ppo.py's battle telemetry must
-            # bucket the TRUE battle win/loss, not whatever this mode's
-            # reward shaping happens to mean). None (absent from
-            # info["reward_terms"] below) for legacy/pbrs_v1, which have no
-            # battle-outcome notion at all.
+
+
             raw_lives_outcome_term: float | None = None
             if self.reward_mode in (REWARD_MODE_VERSUS_LIVES, REWARD_MODE_VERSUS_LIVES_KSIM):
-                # exp10 W5.3: read the UN-weighted single-draw delta, so this
-                # telemetry still carries a usable win/loss sign at
-                # versus_turn_scale=0 (the sparse arm) -- see
-                # `_reward_terms_from_transition_versus_lives`'s
-                # `versus_raw_lives_delta`.
+
+
                 raw_lives_outcome_term = float(reward_debug.get("versus_raw_lives_delta", 0.0))
-            # exp09 W5 Rev 6 (ksim reward): replace the single-draw lives term
-            # with the k-sim expectation whenever the fought battle's config
-            # is at hand (END_TURN steps in versus modes; the oracle's return
-            # embeds the exact fought config). A failed oracle call falls back
-            # to the single-draw term already present in reward_terms.
+
+
             if (
                 self.reward_mode == REWARD_MODE_VERSUS_LIVES_KSIM
                 and bool(out.get("ok"))
@@ -1068,13 +953,8 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
                 and isinstance(info["battle"].get("config"), dict)
             ):
                 if float(self.versus_turn_scale) == 0.0:
-                    # exp10 W5.3 sparse arm: every ksim term is turn_scale-
-                    # weighted, so at turn_scale=0 the fought call can only
-                    # ever produce 0 -- which
-                    # `_reward_terms_from_transition_versus_lives` already put
-                    # there. Skip the oracle entirely (the sparse arm must not
-                    # burn oracle time for a reward it does not use); the
-                    # terminal term and every other reward path are untouched.
+
+
                     reward_debug["ksim_skipped_zero_turn_scale"] = 1.0
                 else:
                     est = self._ksim_estimate(info["battle"]["config"])
@@ -1083,11 +963,8 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
                     else:
                         reward_debug.update(est.debug)
                         ksim_term = float(est.term)
-                        # exp10 W5.3 `stake`: turns 1-2 only, price HALF the
-                        # joint two-turn stake instead of the raw per-turn EV
-                        # (see VERSUS_TURN12_MODE_* above). Telemetry
-                        # (lives_raw_term) is deliberately NOT rescaled --
-                        # this is a reward-pricing change only.
+
+
                         if (
                             self.versus_turn12_mode == VERSUS_TURN12_MODE_STAKE
                             and _safe_int(prev.get("turn"), 1) in VERSUS_TURN12_STAKE_TURNS
@@ -1103,14 +980,11 @@ if gym is not None:  # pragma: no cover - tested via import + simple runtime smo
             reward = float(sum(float(v) for v in reward_terms.values()))
             obs = self.encoder.encode(curr)
             info["step_ok"] = bool(out.get("ok"))
-            # The executed flat action index, for action-mix telemetry -- the
-            # status callback's locals-based fallback proved unreliable under
-            # SubprocVecEnv (run 1 logged actions=n/a throughout).
+
+
             info["action_index"] = int(action)
-            # exp10 W5.W1: attached AFTER the reward sum above -- this key
-            # must NEVER contribute to the trained reward, only to telemetry
-            # (train_ppo.py::_accumulate_battle_event bucketing the TRUE
-            # single-draw battle outcome regardless of reward_mode shaping).
+
+
             if raw_lives_outcome_term is not None:
                 reward_terms["lives_raw_term"] = float(raw_lives_outcome_term)
             info["reward_terms"] = reward_terms

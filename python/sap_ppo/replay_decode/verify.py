@@ -1,46 +1,4 @@
-"""sap_ppo.replay_decode.verify -- frozen regression gate for the replay decoder.
-
-Runs the full decode over the frozen 2,143-game Turtle cache and asserts the
-settled numbers EXACTLY. The decode is deterministic on a fixed cache, so any
-drift -- even by one turn -- is a behavior change that must be understood
-before it ships (see internal design notes for what each
-number means and how it was settled; the 2026-07-10 exp09-chaining re-pin is
-documented there as an addendum).
-
-Checked surfaces (pinned to the 2026-07-12 W3a identity-recovery baseline --
-D1 H4 position tracking + D2 milk/crumb evidence rules on top of the 2026-07-11
-review-fix-batch (C1-C6) baseline; lanes and freeze tracking unchanged since
-wave 5). 104 -> 116 -> 120 checks (W3a +12 evidence lanes; 2026-07-12
-post-adversarial-review fix round +4 F1 orphan-exclusion tripwires). Per-value
-mechanisms for every drifted pin are in the RESULTS.md 2026-07-12 appendix
-(W3a section + the "post-adversarial-review fix round" subsection):
-  * self-validation lanes (a)(a')(b)(b+)(c)(c+)(d)(d')(e)(g) -- exact n/pass;
-  * unbucketed-turn census (roll-not-last / e-frozen-unresolved / no-snapshot);
-  * freeze tracking vs end snapshots (25,216 ok / 36 known mismatches);
-  * buy-membership censuses (pet + food, incl. T5-injection / cross-ref /
-    1-dir / 1-anchor splits + the op kind-conflict counter);
-  * wave-4 identity pass (block anchoring, holdout WRONG-mint must stay 0);
-  * exp09 chained anchoring (double-confirm holdout incl. the round-1 direct
-    lane, pins, skip censuses split conflict/overlap/content/kind, single-
-    anchor line checks, mm/s1 calibration lanes, minted-position invariant --
-    loose+TAGGED default: CHAIN_ALLOW_1DIR=True, 1-dir + 1-anchor tagged);
-  * W3a evidence-quality lanes (PINNED_EVIDENCE): position BLIND-holdout
-    wrong-mint bounds; milk/crumb HINDSIGHT-CONSISTENCY lanes over the converged
-    chain (NOT blind re-decodes); provenance tag-set sizes; + the F1 orphan-
-    exclusion / recovery-veto tripwires (fix round);
-  * coverage over the decoded records (identity 97.5%, genesis 2,143/0, ...).
-
-NOT gated here: the gold-reconcile census (artifact layer) -- run
-  python an internal analysis script --reconcile-census
-and expect reconciled 24,328 / 25,239 snapshot turns (96.39%, fix round; +4 vs
-the W3a 24,324 = the F1 coverage cascade reaching a few more sell-placements;
-+11 vs the fix-batch 24,317 -- a mostly-orthogonal gold-effect surface).
-
-Usage:
-  python -m sap_ppo.replay_decode.verify              # full gate (~30s), exit 1 on drift
-  python -m sap_ppo.replay_decode.verify --cache X    # report-only (no gate) on another cache
-  python -m sap_ppo.replay_decode.verify --max-games N  # smoke run, report-only
-"""
+"""Verify."""
 from __future__ import annotations
 
 import argparse
@@ -58,8 +16,7 @@ PINNED_CACHE = Path(os.environ.get(
     str(Path(__file__).resolve().parents[3] / "data" / "raw_replays_turtle_full.jsonl.gz"),
 ))
 
-# Wave-5 baseline, full cache, 2026-07-10 (branch exp08/impl-wave6 cut from
-# the PR #18 merge). Every value is an exact count, not a rate.
+
 PINNED_TOTALS = {
     "games": 2143,
     "turns": 25255,
@@ -83,13 +40,8 @@ PINNED_UNBUCKETED = {
     "no-end-snapshot": 3,
 }
 PINNED_FREEZE = {"ok": 25216, "mismatch": 36, "no-snapshot": 3}
-# 2026-07-12 W3a: _checked/_ok grow because H4/D2 mints resolve op["enu"] for
-# buys that used to be dead ends (Family A coverage cascade -- newly-resolved
-# ops ride the same enu-is-not-None gate as any snapshot buy). The _1dir /
-# _1anchor sub-buckets SHRINK (retagging, Family B): id_src() ranks the new
-# crossref-position/-milk/-crumb proofs above the counter tags, so a uni
-# resolved by BOTH keeps its identity but is relabelled to the stronger tag --
-# same species, zero net coverage loss (it stays inside pet_ok_crossref).
+
+
 PINNED_MEMBERSHIP = {
     "pet_buys": 52401, "pet_checked": 51295, "pet_ok": 43203,
     "food_buys": 29562, "food_checked": 29381, "food_ok": 29362,
@@ -100,57 +52,20 @@ PINNED_MEMBERSHIP = {
     # conflicts remain -- any growth = a new kind-blind path shipped.
     "op_kind_conflict": 0,
 }
-# 2026-07-12 W3a: block-population growth (Family C, extended chain reach) --
-# once a mechanic identity becomes known (Cow behind a milk stock, Pigeon
-# behind crumbs, combine target via H4), the WALK emits a real content block
-# instead of an opaque barrier, so `blocks` and every pass-1 split grow.
-# holdout_wrong MUST stay 0 (a wrong-mint on a >=2-snapshot block = real error).
+
+
 PINNED_XREF = {
     "blocks": 93141, "anchored": 30464, "ambiguous": 11110, "no_anchor": 51567,
     "anchored_multi": 18411, "anchored_single": 12053,
     "holdout_robust": 16910, "holdout_wrong": 0,
 }
-# exp09 chained anchoring. chain_holdout2_wrong is the direct wrong-mint
-# bound of the DOUBLE-confirmed pins (the 1-dir tagged slice carries ~1-2%,
-# measured by guarded holdouts -- see STATUS.md). Chained-arithmetic drift is
-# watched by the multi->multi calibration lanes (chain_pred_*_mm*); the *_s1
-# lanes are dominated by single-anchor base placement noise and measure THAT,
-# not the chain (review C8). Any GROWTH in a *_wrong value is a red flag,
-# shrinkage is progress (re-pin + document).
-# 2026-07-12 W3a identity-recovery re-pin (branch exp09/w3a-identity-recovery;
-# per-value mechanisms in internal design notes 2026-07-12
-# appendix). Headline surge (crossref 260,630 -> 283,517; identity 91.3% ->
-# 97.2%) is the H4/D2 blocker-removal + mint-feedback effect: combine-target
-# and plain-buy-Cow None-barriers become EXACT counted consumes, so the
-# counter chain reaches further (more blocks pinned) and a large slice of
-# previously counter-derived identities is retagged to the stronger
-# crossref-position/-milk/-crumb provenance (1dir/1anchor sub-buckets shrink).
-# *_wrong growth adjudicated to sample level (see RESULTS.md deep-dives):
-#   onedir_promoted_wrong 109 -> 323: 0 grade-flips on the overlapping
-#     population; the +214 is all NEW grading opportunities (round-1 1-dir
-#     guesses now have an independent final-round re-derivation to grade
-#     against) -- hole-closing shifts the round-1 frontier; the lane converges
-#     toward its already-published 0.45-1.6% expected band.
-#   chain_holdout2_wrong 13 -> 27 / r1 10 -> 23: ZERO flips in the common
-#     population; +14 are newly-double-confirmable blocks (barrier removal)
-#     inheriting pre-existing unmodeled gaps at a selection-biased higher rate.
-#   chain_conflict 800 -> 1,114: barrier removal reveals fwd/bwd-disagreeing
-#     stretches that are safely QUARANTINED (never minted -- conflict entries
-#     never acquire a "base"); D2 milk-hole fix nets -255 vs D1's 1,369.
-#   chain_pred_counted_s1_wrong 1092 -> 1528 (rate 29.8% -> 35.3%): the
-#     single-anchor-endpoint / cross-turn PLACEMENT-noise calibration lane
-#     (measurement only, no mints). All wrongness localises to single-anchor
-#     endpoints (MM 40/2281 = 1.75%, IMPROVED from 2.73%; MS 16.8% / SM 35.7%
-#     / SS 61.7%) -- the chain ARITHMETIC did not regress. Growth is the
-#     barrier->counted-consume recomposition pushing more predictions into the
-#     cross-turn regime (100% of sampled wrongs were xturn). NOT chain error.
+
+
 PINNED_CHAIN = {
     "chain_holdout2": 13235, "chain_holdout2_wrong": 29,
-    "r1_chain_holdout2": 10003, "r1_chain_holdout2_wrong": 24,  # direct lane (C6)
-    # verify-round lane: r1 1-dir mints graded against independent non-1-dir
-    # re-derivation in the final round (promoted subset): 357/47,399 = 0.75%
-    # (W3a: 0 flips on the overlap; fix round: F1 orphan-exclusion extends the
-    # promoted population, wrong-RATE IMPROVES 0.95% -> 0.75%, 0 quality flips).
+    "r1_chain_holdout2": 10003, "r1_chain_holdout2_wrong": 24,
+
+
     "onedir_promoted": 47399, "onedir_promoted_wrong": 357,
     "chain_pinned_pure": 18653, "chain_pinned_counted": 38161,
     "chain_pinned_1dir": 11687, "chain_disambiguated": 10433,
@@ -163,11 +78,8 @@ PINNED_CHAIN = {
     "crossref_chained": 240084, "crossref_chained_1dir": 92608,
     "crossref_1anchor_cum": 10500,
     "crossref_unis": 292251,
-    # calibration lanes, endpoint-quality split (review C8): mm = the chained
-    # arithmetic (watch these for real regressions), s1 = single-anchor base
-    # placement + cross-turn noise (expected ~15-35% wrong, NOT chain error;
-    # measurement only, mints nothing). W3a + fix round: every mm lane held or
-    # IMPROVED (rates: pure_mm 0.80%, counted_mm 1.77%, xturn_mm 1.37%).
+
+
     "chain_pred_pure": 20714, "chain_pred_pure_wrong": 2237,
     "chain_pred_pure_mm": 6411, "chain_pred_pure_mm_wrong": 51,
     "chain_pred_pure_s1": 14303, "chain_pred_pure_s1_wrong": 2186,
@@ -177,14 +89,8 @@ PINNED_CHAIN = {
     "chain_pred_xturn": 15412, "chain_pred_xturn_wrong": 3049,
     "chain_pred_xturn_mm": 5902, "chain_pred_xturn_mm_wrong": 81,
 }
-# 2026-07-12 W3a Family A coverage cascade: H4/D2 mints resolve op["enu"] for
-# buys that used to be dead ends, so identity coverage climbs 91.3% -> 97.2%
-# (+1,467 turns) and buy_unresolved_identity falls 2,132 -> 661. has_tierup
-# grows +89 as newly-resolved above-tier buys become countable; shop_gap
-# falls as frozen carry-ins let more roll-shops reconstruct. Fix round (F1
-# pilled-orphan exclusion) extends the SAME cascade one step: fully-decoded
-# 24,536 -> 24,619 (97.2% -> 97.5%), buy_unresolved 661 -> 584, shop_gap
-# 108 -> 98, has_tierup(T4) 6,895 -> 6,886.
+
+
 PINNED_COVERAGE = {
     "fully_decoded_identity": 24619,
     "fully_decoded_rolled_only": 16012,
@@ -196,21 +102,7 @@ PINNED_COVERAGE = {
     "has_ability_buy(T5)": 3194,
 }
 
-# 2026-07-12 W3a evidence-quality lanes (D1 H4 position recovery + D2 milk/crumb
-# ability evidence). POSITION lanes are true BLIND picks (the slot choice graded
-# against exp truth): position_holdout n = blind adjudications, _wrong = the
-# direct wrong-mint bound (0). MILK/CRUMB lanes are HINDSIGHT-CONSISTENCY lanes
-# over the final converged chain -- the candidate set is already collapsed by ALL
-# mechanisms and the evidence rule's nominee is checked against the independently-
-# RESOLVED Cow/Pigeon; they are NOT masked blind re-decodes, so rule-fired
-# precision is the production-relevant measure (adversarial-round note + the
-# masked-rerun confound are in the exp08 RESULTS.md 2026-07-12 appendix).
-# crossref_*_unis = provenance tag-set sizes (unis whose species was PROVEN by
-# that evidence class). All keys live in run_stats["xref"] (pos_stats merged in).
-# Fix round (F1 pilled-orphan exclusion): position_species_conflict 16 -> 0 (the
-# 16 clashes were Type-8 pilled false-orphans, now excluded before H4);
-# crossref_position_unis 5,706 -> 5,666 (40 phantom mints removed); the cascade
-# nudges position_holdout 449 -> 451 / milk 1,332 -> 1,333 / crumb 866 -> 875.
+
 PINNED_EVIDENCE = {
     # H4 position recovery (combine-target certainty tracker)
     "crossref_position_unis": 5666,
@@ -238,10 +130,7 @@ PINNED_EVIDENCE = {
 
 
 def coverage_stats(records: list, pools: dict | None = None) -> Counter:
-    """Coverage census over decoded records (moved from exp08 coverage.py):
-    of all turns, how many are fully decoded (every shop state reconstructed +
-    every buy identity-resolved), and where the rest fall (shop gaps /
-    tier-up-or-ability buys = T4/T5 / unresolved identity)."""
+    """Coverage stats."""
     pools = pools or load_pools(POOLS_PATH)
     pet6 = set(pools["minion"]["6"])
     food6 = set(pools["food"]["6"])
@@ -250,8 +139,8 @@ def coverage_stats(records: list, pools: dict | None = None) -> Counter:
     c = Counter()
     for r in records:
         ss = r["start_shop"]["provenance"]
-        # "genesis" = turn-1 opening shop read from the stored
-        # GenesisBuildModel (T3, wave 5); a known shop like a seed-recon one.
+
+
         shops_ok = ss in ("reconstructed", "genesis")
         for roll in r["roll_shops"]:
             if roll["provenance"] != "frozen-tracked":
@@ -345,7 +234,7 @@ def collect_checks(agg: dict, n_games: int, cov: Counter) -> list:
         _gate(checks, f"identity xref [{k}]", xr.get(k, 0), v)
     for k, v in PINNED_CHAIN.items():
         _gate(checks, f"chained anchoring [{k}]", xr.get(k, 0), v)
-    # W3a evidence-quality lanes (position/milk/crumb), also in xref via pos_stats.
+
     for k, v in PINNED_EVIDENCE.items():
         _gate(checks, f"W3a evidence [{k}]", xr.get(k, 0), v)
     # structural invariant, not a pin (review C3): every crossref uni comes

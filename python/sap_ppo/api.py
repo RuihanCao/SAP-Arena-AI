@@ -13,57 +13,6 @@ from .oracles.sap_calc_battle_oracle import run_battle_oracle
 from .schema import validate_action_schema, validate_state_schema, validate_transition_schema
 
 
-# exp13 W0b' (the schema-validation perf lever). MEASURED on the arm C
-# profile shape (an internal dataset path, width 72, vgame leaf):
-# `validate_state_schema` + `validate_transition_schema` are 70.6% of profiled
-# wall time and 98.9% of `step` itself (559us + 123us + 1046us of a 1746us
-# call; the engine plus the two deepcopies are the remaining 154us). The
-# validators are ALREADY compiled once and reused (`schema._validators` is
-# `lru_cache`d -- verified, one miss for the whole process), so there is no
-# recompilation left to cache away; the cost is the jsonschema walk itself,
-# and the only structural saving left inside `step` (drop the redundant
-# re-walk of `state_before`/`action`, which this function has just validated)
-# measured 1.36x, short of the 2x bar W0b' set for keeping validation on
-# everywhere.
-#
-# So: an OPT-IN, process-level skip for IMAGINED walks only. Off by default,
-# so no run that does not ask for it moves. "Imagined" means here what it
-# means in `tools/honest_frame.py`: an engine walk whose boards are only ever
-# LOOKED AT (the BC decode that proposes a chain, search candidate replay,
-# prefix walks, the k resampled completions). The COMMITTED path --
-# `eval_versus_fullgame.py`'s own op-by-op replay against the real state --
-# calls `step` directly and always validates, so everything that actually
-# enters a game's history is still schema-checked.
-#
-# exp13 W1b readout 0 (2026-08-07) re-measured this on the real frame and the
-# 70.6% above did not survive: it is 24.1% of play wall clock. The split per
-# validator then said something the merged number hid. 23.6 of those 24.1
-# points are `validate_state_schema` reached through `legal_actions`, and 0.4
-# is every validator on the real committed path put together. The flag could
-# not reach the first, because `imagined_step` was the only imagined FACE: an
-# imagined walk's `step` skipped validation while the `legal_actions` call
-# that chose the action for that same walk did not.
-#
-# That is a hole in this flag's stated scope, not a reason to widen the scope.
-# The paragraph above already names "the BC decode that proposes a chain" as
-# imagined, and `bc_recommender.legal_mask` IS that decode reading the rules.
-# So the repair is a second imagined face, `imagined_legal_actions`, and the
-# boundary is unchanged and still structural:
-#
-#   - `step` (validating) is what the committed op-by-op replay calls, so
-#     every board that enters a game's history is schema-checked as its
-#     `state_before` and its transition is checked on the way out.
-#   - `legal_actions` (validating) is what the exp13 segment recorder calls
-#     for its `legal_actions_digest`, so the real decision boards it pins are
-#     schema-checked as well.
-#   - `imagined_step` and `imagined_legal_actions` are the two opt-in faces,
-#     and neither is reachable from either of the two above.
-#
-# What the skip removes is therefore a RE-walk: the same real board `step` is
-# about to validate, validated once more by a proposer that is only reading
-# it. Each of those four statements is pinned as a test in
-# `python/tests/test_exp13_imagined_validation.py` rather than left standing
-# as this comment.
 _SKIP_IMAGINED_VALIDATION = False
 
 
@@ -110,25 +59,7 @@ def step(
     engine call, the deepcopies and the returned transition are identical
     either way. Callers should not pass it directly; `imagined_step` is the
     supported face, so that WHICH walks may skip stays one decision in one
-    place.
-
-    `copy_state_before=False` puts the CALLER'S OWN state object into the
-    transition as `state_before` instead of a deep copy of it. The CONTENT is
-    identical either way, and that is not a new assumption: this copy is taken
-    AFTER `apply_action` has already run, so an engine that mutated the state
-    it was handed would have been corrupting today's `state_before` all along
-    (`engine.apply_action` in fact deep-copies before it touches anything).
-    What the alias costs is that the transition and the caller now share one
-    object, so a consumer that WRITES to `state_before` writes to the caller's
-    board. Same rule as `validate`: callers should not pass this directly;
-    `imagined_step` is the supported face, so which walks share stays one
-    decision in one place. On the labelling path this copy is pure waste:
-    that path commits nothing, so its step census is 899,373 imagined steps
-    out of 899,373, and no imagined consumer reads `state_before` at all.
-    Priced at 60.10 s, 5.53% of play wall clock by `RESULTS_speedup.md`'s
-    2026-08-08 section 2.2, and measured at 6.43% by the section that
-    follows it.
-    """
+    place."""
     if validate:
         validate_state_schema(state)
         validate_action_schema(action)
@@ -139,8 +70,8 @@ def step(
         "state_after": outcome.state_after,
         "deterministic": outcome.deterministic,
         "stochastic_reason": outcome.stochastic_reason,
-        # exp13 Amendments A2.1 and A4: the honest frame's cut criterion.
-        # See `engine.StepOutcome`.
+
+
         "stochastic_structural": outcome.stochastic_structural,
         "legal": outcome.legal,
         "engine_notes": outcome.notes,
@@ -179,14 +110,7 @@ def imagined_legal_actions(state: dict[str, Any]) -> list[dict[str, Any]]:
 
     The read-only twin of `imagined_step`, and the face `bc_recommender`'s
     legal mask takes. Identical to `legal_actions` unless
-    `set_skip_imagined_validation(True)` was called (default: it was not).
-
-    Skipping here does not reduce what is guaranteed about the real game. A
-    real board reaches this function only as the state a proposal is reading,
-    and the same board is validated by `step` when an op is actually applied
-    to it, and by `legal_actions` when the exp13 recorder digests it. See the
-    boundary paragraph next to `_SKIP_IMAGINED_VALIDATION`.
-    """
+    `set_skip_imagined_validation(True)` was called (default: it was not)."""
     return legal_actions(state, validate=not _SKIP_IMAGINED_VALIDATION)
 
 

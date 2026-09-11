@@ -18,36 +18,17 @@ from .opponents import (
     SelfPlayPoolProvider,
 )
 
-# Default held-out split for TRAINING rollouts (exp09 W5 P0): the eval/
-# held-out reference is meant to score against a FIXED, disjoint "test"
-# split (see `sap_ppo.opponents.chain_snapshot` module docstring) -- so
-# training's own default must not silently draw from the same pool.
+
 DEFAULT_TRAIN_OPPONENT_SPLIT = "train"
 
-# exp09 W5 P0 Fix C (codex finding 3): the periodic/standalone EVAL
-# reference must default to a FIXED, held-out split, distinct from
-# `DEFAULT_TRAIN_OPPONENT_SPLIT` above, so a plain launch scores itself
-# against opponents training never sees, without the operator having to
-# remember to pass a separate flag. Used by `train_ppo.py`'s own built-in
-# periodic eval (a SEPARATE split from its training-rollout split) and by
-# `eval_ppo.py`'s single `--opponent-split` default.
+
 DEFAULT_EVAL_OPPONENT_SPLIT = "test"
 
-# exp09 W5 P0 Fix A (codex finding 1): episode-length turn-cap defaults.
-# Named constants -- previously bare literals inline in `train_ppo.py`'s
-# argparse handling (`if args.max_turn is None: args.max_turn = 30 if ...
-# else 15`) -- given ONE importable home here so every W5 entrypoint
-# (`train_ppo.py`, `eval_ppo.py`, `init_ppo_model.py`,
-# `train_bc_warmstart.py`) and `tools/frame_parity_harness.py`'s
-# `encoder_horizon` regression dimension share the SAME resolution instead
-# of each re-deriving (or hardcoding) "30 for chain_snapshot, else 15".
+
 DEFAULT_MAX_TURN_STANDARD = 15
 DEFAULT_MAX_TURN_CHAIN_SNAPSHOT = 30
 
-# exp09 W5 P0 Fix A (codex finding 1): the V4 encoder's OWN turn-
-# normalization horizon for chain-PPO is FIXED at 15 -- decoupled from the
-# episode-length cap above (30) -- see `resolve_encoder_max_turn`'s
-# docstring for why these must not be the same knob.
+
 CHAIN_SNAPSHOT_ENCODER_MAX_TURN = 15
 
 
@@ -63,50 +44,21 @@ def resolve_max_turn(*, opponent_mode: str, max_turn_arg: int | None) -> int:
     replicate what a REAL chain-PPO launch resolves, and importing this
     function keeps that check honest (reflecting whatever this file actually
     does) instead of duplicating "30" as a second, driftable literal in the
-    harness.
-
-    `--opponent-mode chain_snapshot` (exp09 W5 versus-mode training) defaults
-    to `DEFAULT_MAX_TURN_CHAIN_SNAPSHOT` (30) to match the eval frame's
-    episode-length allowance (`tools/eval_versus_fullgame.py`'s
-    `DEFAULT_MAX_TURN`) so a training episode is not cut short relative to
-    eval; every other mode keeps the legacy one-turn/arena default of
-    `DEFAULT_MAX_TURN_STANDARD` (15). An explicit `max_turn_arg` (a real
-    `--max-turn` CLI value) always wins over either default.
-    """
+    harness."""
     if max_turn_arg is not None:
         return int(max_turn_arg)
     return DEFAULT_MAX_TURN_CHAIN_SNAPSHOT if str(opponent_mode) == "chain_snapshot" else DEFAULT_MAX_TURN_STANDARD
 
 
 def resolve_encoder_max_turn(*, opponent_mode: str, episode_max_turn: int) -> int:
-    """Resolve the V4 ENCODER's turn-normalization horizon (`_norm(turn,
-    self.max_turn)` / `_turns_to_next_tier`, `train/observation.py`) for a
-    training/eval launch -- DECOUPLED from the episode-length cap above
-    (exp09 W5 P0 Fix A, cross-model review finding 1).
-
-    Before this fix, every entrypoint fed the SAME resolved `max_turn` to
-    both the episode-length cap AND the encoder's `max_turn=` -- for
-    `--opponent-mode chain_snapshot` that meant the encoder was built at
-    max_turn=30. But the eval frame's `BcRecommender` (`tools/
-    bc_recommender.py`, `DEFAULT_MAX_TURN=15`) -- and, more importantly, the
-    frozen `flat_v2` warm-start / KL anchor checkpoint chain-PPO is built
-    from -- were both trained/built with max_turn=15. A turn-30 encoder
-    normalizes `_norm(turn, 30)` / `_norm(turns_to_next, 30)` to HALF the
-    value a turn-15 encoder would for the identical raw turn number, so
-    every state the chain-PPO policy sees would be silently off-
-    distribution relative to what its own warm-start/anchor was trained on
-    -- see `tools/frame_parity_harness.py`'s `encoder_horizon` dimension,
-    the regression gate for this fix.
-
-    For `--opponent-mode chain_snapshot` this is therefore a FIXED
+    """For `--opponent-mode chain_snapshot` this is therefore a FIXED
     `CHAIN_SNAPSHOT_ENCODER_MAX_TURN` (15), regardless of `episode_max_turn`
     (still resolved to 30 by `resolve_max_turn`, unaffected -- the episode
     is allowed to run longer than the encoder's own horizon constant; turns
     past 15 simply clamp their turn-normalized features at 1.0, exactly as
     `BcRecommender`'s frame already does for any post-turn-15 state it ever
     encodes). Every other mode is unaffected: `episode_max_turn` is
-    returned as-is, the same value the encoder always used before this fix.
-    """
+    returned as-is, the same value the encoder always used before this fix."""
     if str(opponent_mode) == "chain_snapshot":
         return CHAIN_SNAPSHOT_ENCODER_MAX_TURN
     return int(episode_max_turn)
@@ -135,21 +87,16 @@ def build_opponent_provider(
             raise ValueError("snapshot_mode_requires_snapshot_path")
         return ReplaySnapshotProvider(snapshot_path=Path(snapshot_path), seed=int(seed))
     if mode_norm == "chain_snapshot":
-        # exp09 W5 P0: the SAME chain-snapshot opponent source the W4c eval
-        # frame uses (`tools/eval_versus_fullgame.py`), instead of the
-        # `snapshot` mode's DIFFERENT, schema-incompatible
-        # `replay_snapshot_v1.json` (see `frame_parity_harness.py`'s
-        # "opponent" finding). `ChainSnapshotSource.sample()` satisfies
-        # `OpponentProvider` directly -- no adapter needed.
+
+
         path = Path(chain_snapshot_path) if chain_snapshot_path is not None else Path(DEFAULT_CHAIN_SNAPSHOT)
         return ChainSnapshotSource(
             path,
             seed=int(seed),
             split=opponent_split,
             opponent_pack=chain_opponent_pack,
-            # exp09 W5.3: low-rank curriculum pool pass-through (see
-            # `ChainSnapshotSource`'s own docstring for the exclusion rule
-            # applied when either bound is set).
+
+
             opponent_rank_min=chain_opponent_rank_min,
             opponent_rank_max=chain_opponent_rank_max,
         )

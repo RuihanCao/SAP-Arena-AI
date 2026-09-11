@@ -761,7 +761,7 @@ def build_side_replay(
     board_pre_battle: list[dict[str, Any]],
     end_context: dict[str, Any],
 ) -> dict[str, Any]:
-    """Build one side's exp08-complete view from stored real transitions."""
+    """Build side replay."""
     start_before = start_transition.get("state_before") or {}
     start_after = start_transition.get("state_after") or {}
     source = "initial_deal" if int(turn) == 1 else "automatic_reroll"
@@ -951,13 +951,6 @@ def summarize_public_replay(view: dict[str, Any]) -> dict[str, Any]:
     """Drop the two archive-only blobs the replays page keeps behind a
     collapsed `<details>`, leaving markers that say the detail exists.
 
-    THE COMPLAINT (2026-08-12). `/replays` did not paint at all over the ssh
-    tunnel from the US. Nothing was broken: opening the page selects the newest
-    game and fetches it whole, and a completed 14-turn duel is 24.8 MB of
-    compact JSON. The tunnel measured 125 KB/s, so the first paint needed
-    around eight minutes of transfer for a page whose visible content is a few
-    hundred kilobytes.
-
     Two fields are 22 of those 24.8 MB, and NEITHER IS ON SCREEN until it is
     clicked:
 
@@ -979,21 +972,13 @@ def summarize_public_replay(view: dict[str, Any]) -> dict[str, Any]:
     caller passes a freshly built `build_public_replay` result. Deliberately
     NOT folded into `build_public_replay`: that function's output is the
     archive's public shape, validated against `schemas/play_web_game_v2.json`,
-    and a transport projection has no business changing it.
-    """
+    and a transport projection has no business changing it."""
     view["detail"] = "summary"
     for turn in view.get("turns") or []:
         segments = turn.get("segments")
         if isinstance(segments, list):
-            # `n_segments` and the other counts are scalars and stay; it is the
-            # segment records themselves that are heavy.
-            #
-            # Amendment 6 keeps ONE derived list: the searched width of each
-            # segment and how it ended. That is the "widths" column the live
-            # page has always shown per turn, and Ruihan asked for the same
-            # thing to be readable from a replay. It is a handful of small
-            # integers against segment records that hold whole candidate
-            # chains, so it does not undo what this projection is for.
+
+
             turn["segment_widths"] = [
                 {
                     "width": int((s or {}).get("width") or 0),

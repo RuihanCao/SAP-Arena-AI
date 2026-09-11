@@ -368,10 +368,10 @@ class StateVectorEncoderV2:
         self._status_index = {sid: i for i, sid in enumerate(self._status_ids)}
 
         self._team_slot_size = (
-            (1 + len(self._pet_ids))  # pet one-hot with explicit empty bucket
-            + (1 + len(self._equip_ids))  # equipment one-hot with explicit none bucket
-            + len(self._status_ids)  # status multi-hot
-            + 15  # numeric + combine + trigger features
+            (1 + len(self._pet_ids))
+            + (1 + len(self._equip_ids))
+            + len(self._status_ids)
+            + 15
         )
         self._shop_slot_size = (
             2  # slot type one-hot
@@ -969,28 +969,7 @@ def assert_model_observation_compatible(
     encoder: Any,
     context: str,
 ) -> dict[str, Any]:
-    """Raise iff `encoder` is not what `model_path`'s saved run produced.
-
-    exp09 W5 P0 (fingerprint robustness, codex finding): `OBSERVATION_SPEC_KEYS`
-    / `vocab_fingerprint` never depended on `max_turn` -- two encoders built
-    with different horizons but the same mode/vocab hash identically, so a
-    horizon mismatch used to pass this check silently even though `max_turn`
-    changes real encoded VALUES (`_norm(turn, self.max_turn)`,
-    `_turns_to_next_tier`). Closed below as a SEPARATE comparison against the
-    plain top-level `"max_turn"` hyperparameter field `train_ppo.py` /
-    `train_bc_warmstart.py` already write into every run's metadata.json
-    (already read back elsewhere too: `tools/build_model_pool.py::
-    _load_encoder_max_turn`) -- deliberately NOT folded into
-    `encoder_observation_spec()` / `OBSERVATION_SPEC_KEYS` itself, since that
-    dict is ALSO compared by a separate direct `==` elsewhere against a BC
-    dataset cache's OWN recorded spec (`train_bc_warmstart.py`'s
-    `bc_dataset_observation_spec_mismatch` check, against
-    `chain_bc_dataset.py`'s manifest); adding a key there would make every
-    dataset cache built before this fix spuriously "mismatch" too. This
-    checkpoint-metadata check is unaffected by that concern and every real
-    checkpoint metadata this function is ever called against already
-    carries the field (verified: both `train_ppo.py` write sites do).
-    """
+    """Raise iff `encoder` is not what `model_path`'s saved run produced."""
     spec_expected = encoder_observation_spec(encoder)
     meta = load_model_observation_metadata(Path(model_path))
     if not isinstance(meta, dict):
@@ -1011,16 +990,7 @@ def assert_model_observation_compatible(
         if lhs != rhs:
             mismatches.append(f"{key}:{lhs}!={rhs}")
 
-    # exp09 W5 P0 Fix A: chain-PPO now DECOUPLES the V4 encoder's own horizon
-    # from the episode-length cap (`runtime.resolve_encoder_max_turn`), so a
-    # run's plain top-level `"max_turn"` metadata field (the episode cap) can
-    # legitimately differ from the encoder it was actually built with.
-    # `train_ppo.py` / `init_ppo_model.py` / `train_bc_warmstart.py` all now
-    # ALSO write a separate `"encoder_max_turn"` field recording exactly
-    # that -- prefer it here, falling back to the legacy plain `"max_turn"`
-    # only for metadata written before this fix (where the two were always
-    # identical by construction, so the fallback is exactly correct for
-    # them, not an approximation).
+
     meta_encoder_max_turn = meta.get("encoder_max_turn", meta.get("max_turn"))
     if meta_encoder_max_turn is None:
         mismatches.append("max_turn:missing_in_metadata")

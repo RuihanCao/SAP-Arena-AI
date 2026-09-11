@@ -3,12 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SAP-Arena Web Simulator</title>
+  <title>SAP-Arena-AI Sandbox</title>
   <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/duel.css" />
   <script src="/static/build_guard.js" defer></script>
 </head>
 <body>
   <div class="wrap">
+    <nav class="menu-actions" aria-label="Navigation">
+      <a class="menu-btn secondary" href="/">Menu</a>
+      <a class="menu-btn" href="/play">Play</a>
+      <a class="menu-btn secondary" href="/replays">Replays</a>
+    </nav>
     <!-- ================= the shop scene ================= -->
     <div class="stage" id="stage">
     <div class="scene" id="scene">
@@ -17,7 +23,6 @@
       </div>
       <div class="hud-right">
         <span class="mode-tile" id="mode-tag" title="game mode"></span>
-        <button id="btn-recommend" class="hud-btn"><span>Recommend</span></button>
       </div>
 
       <div class="lane" id="team-lane">
@@ -75,16 +80,6 @@
       <!-- What this server is serving, filled in from /api/state's `surface`
            block. It is first because "which code is this?" is the question a
            stale deployment makes you unable to answer. -->
-      <div class="panel">
-        <h3 style="margin:0 0 8px;">Serving</h3>
-        <div id="build-line" class="tiny"></div>
-      </div>
-
-      <div class="panel">
-        <h3 style="margin:0 0 8px;">Tempo Recommendation</h3>
-        <div id="recommendation" class="tiny">No recommendation yet.</div>
-      </div>
-
       <details class="panel drawer" id="drawer-battle" open>
         <summary>Last Battle</summary>
         <div class="drawer-body">
@@ -95,6 +90,7 @@
       <details class="devzone drawer" id="drawer-dev">
         <summary>Dev tooling</summary>
         <div class="drawer-body">
+        <div id="build-line" class="tiny"></div>
         <div class="row">
           <button id="btn-reset">Reset</button>
           <button id="btn-undo">Undo</button>
@@ -157,6 +153,25 @@
       </details>
     </div>
   </div>
+  <div class="duel-end sandbox-end" id="sandbox-end" role="dialog" aria-modal="true" aria-labelledby="sandbox-end-title" aria-describedby="sandbox-end-sub" hidden>
+    <div class="duel-end-card">
+      <div class="duel-end-title" id="sandbox-end-title">Game over</div>
+      <div class="duel-end-sub" id="sandbox-end-sub"></div>
+      <div class="duel-end-boards">
+        <div class="duel-end-board">
+          <div class="duel-end-board-title">Your final board</div>
+          <div class="duel-board-row" id="sandbox-end-board"></div>
+        </div>
+      </div>
+      <div class="duel-setup-error" id="sandbox-end-error" role="alert" hidden></div>
+      <div class="duel-end-actions">
+        <button class="duel-btn primary" id="sandbox-end-again" type="button">Play again</button>
+        <a class="duel-btn" id="sandbox-end-replay" target="_blank" rel="noopener" hidden>View replay</a>
+        <a class="duel-btn" href="/">Menu</a>
+      </div>
+    </div>
+  </div>
   <script src="/static/app.js"></script>
+  <script src="/static/sandbox.js"></script>
 </body>
 </html>

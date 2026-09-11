@@ -1,13 +1,4 @@
-"""exp16 W5: the human-vs-AI duel behind an HTTP surface (`/play`).
-
-WHAT THIS IS. W2 built the headless duel core (`duel.py::DuelSession`) and W3
-built the AI's turn (`ai_worker.py::AiTurnWorker`). This module is the thing a
-BROWSER talks to: it owns one live game, serves the human's side in exactly the
-shape the exp14 shop skin already renders (`play_web/app.py::App._snapshot`),
-and adds a `duel` block for everything the skin does not know about -- the
-opponent, the thinking badge, the gear, the per-turn record.
-
-WHAT THE BROWSER IS AND IS NOT TOLD. The AI's live board is NEVER in a
+"""WHAT THE BROWSER IS AND IS NOT TOLD. The AI's live board is NEVER in a
 snapshot. The only AI boards that leave this module are the pre-battle boards
 of turns that have already RESOLVED (`turns[i].ai_board`), which is the same
 thing the real game shows you: you see what you just fought, never what your
@@ -22,15 +13,7 @@ fixed-clock turn and then collects it. End Turn never changes search policy.
 FAILURE IS LOUD. A failed AI turn is recorded with its code, surfaced as
 `AI failed turn N: <code>`, and the AI stands still for that turn. Two failures
 in a row end the game (`end_reason="ai_failed"`) rather than quietly playing a
-weaker opponent, exactly as `duel_smoke.py` does.
-
-THREADING. The HTTP server is threaded, so every mutation (`new_game`, `apply`,
-`undo`, `end_turn`, `set_config`) is serialised on one lock. `status()`
-deliberately takes NO lock: it is polled several times a second to drive the
-thinking badge and must stay live while `end_turn` is inside the battle oracle.
-It reads the worker's own lock-protected status plus a handful of plain
-attribute reads, none of which can tear.
-"""
+weaker opponent, exactly as `duel_smoke.py` does."""
 
 from __future__ import annotations
 
@@ -51,6 +34,10 @@ from ...opponents import render_replay_image_from_calc_rows
 from ...oracles.sap_calc_battle_oracle import generate_calculator_link
 from .agent import AgentConfig, build_agent, build_search, demo_agent_config
 from ..search_recommender import COMPLETION_BC_GREEDY, COMPLETION_V_SEARCH
+from .public_settings import (
+    ROOT_WIDTH, COMPLETION_WIDTH, INITIAL_SAMPLES, DEFAULT_TURN_SECONDS,
+    SEARCH_MODES, engine_gear, public_mode, turn_seconds,
+)
 from .archive import DuelArchive
 from .ai_worker import (
     GEARS,
@@ -77,31 +64,15 @@ from .replay_view import build_public_replay, build_side_replay
 from .value_log import ValueLog, read_log as read_value_log
 from .value_probe import ValueProbe, apply_actions, state_legal_actions
 
-# exp16 show-value: how many legal actions one level-C request will value.
-# Every legal action costs one greedy BC completion, so this is the only place
-# the feature can become slow. It is a CAP, and a capped response says so
-# (`actions_capped`, `n_legal_actions`) rather than quietly showing a prefix.
+
 DEFAULT_VALUE_ACTION_CAP = 60
 
-# How long `end_turn` will wait for the AI to hand over a turn. Far above the
-# measured path (0.839 s worst case in W3's gate, and a full-clock turn is
-# bounded by its own 105 s budget); it exists so a wedged worker becomes an
-# `ai_timeout` banner instead of a hung request.
+
 AI_TURN_TIMEOUT_S = 300.0
 DEFAULT_SEED_SPACE = 1 << 31
 ARCHIVE_RECOVERY_SCAN_INTERVAL_S = 5.0
 
-# The live page needs battle outcomes, boards, and search telemetry, not the
-# per-action replay transitions kept under the archive-only human/ai blocks.
-# Projecting explicitly prevents every shop click from returning the entire
-# accumulated v2 replay history.
-#
-# THIS NAME LIST ONLY SEES THE TOP LEVEL OF A TURN RECORD, and that is how the
-# same defect came back in the fixed-clock wave: `segments` is on the list, so
-# each segment passed through whole, and the per-chunk benchmark telemetry that
-# wave added INSIDE a segment rode out with it. `_live_segment_record` below is
-# the other half of the guard, and it is deliberately structural rather than a
-# second name list -- see its docstring.
+
 LIVE_TURN_FIELDS = (
     "turn",
     "ok",
@@ -148,20 +119,7 @@ LIVE_TURN_FIELDS = (
     "human_board",
 )
 
-# What one turn record, one segment inside it, one other projected field and
-# one scalar may cost the browser.
-#
-# These are BOUNDS, not measurements, and they are the part of this fix that
-# outlives it: a name list only refuses what someone thought to name, while a
-# ceiling refuses SIZE, which is the thing that actually hurt. Measured on a
-# real 7-turn game (W7, `probe_state_payload.py`), the projected record is
-# 5,839 bytes at its worst and a projected segment 453; the same records before
-# the projection were 3.1 MB and 493 KB. So a recurrence of the per-chunk leak
-# trips these two orders of magnitude before a human could notice the page has
-# gone slow, while ordinary growth (another scalar, a sixth pet on a board) has
-# room. Enforced three ways: `test_exp16_duel_app.py::TestTheLivePayloadIsBounded`,
-# a runtime counter surfaced as `duel.payload_guard`, and a `gate_duel.py`
-# verdict that measures the payload of a whole real browser game.
+
 MAX_LIVE_SEGMENT_BYTES = 2048
 MAX_LIVE_TURN_RECORD_BYTES = 16384
 MAX_LIVE_FIELD_BYTES = 4096
@@ -202,14 +160,6 @@ def _scalar_fits(value: Any) -> bool:
 def _live_segment_record(segment: dict[str, Any], dropped: set[str]) -> dict[str, Any]:
     """One segment as the browser sees it: its scalars, and nothing that nests.
 
-    THE RULE IS STRUCTURAL ON PURPOSE. `LIVE_TURN_FIELDS` is a list of NAMES
-    over the top level of a turn record, so it cannot see anything added one
-    level below it -- and one level below it is exactly where the fixed-clock
-    wave added `chunk_timings`, `chunk_sizes` and `stage_seconds`. That put
-    about half a megabyte per segment into the response to EVERY human action:
-    19.5 MB and ~1.0 s of serialisation by turn 7 of Ruihan's game on
-    2026-08-06, measured again here as 12.3 MB by turn 5.
-
     A third name list would fail the same way the second one did, so this is a
     shape rule instead: a segment reaches the page as its scalars, and a scalar
     that has grown into a blob (`MAX_LIVE_SCALAR_BYTES`) does not, because
@@ -228,8 +178,7 @@ def _live_segment_record(segment: dict[str, Any], dropped: set[str]) -> dict[str
 
     The FULL segment, per-chunk timings and all, stays in `self.turn_records`
     and in the durable archive -- which is what `benchmark_inference_clock.py`
-    and `check_archive.py` read, and neither goes through this function.
-    """
+    and `check_archive.py` read, and neither goes through this function."""
     live: dict[str, Any] = {}
     for key, value in segment.items():
         if not _is_live_scalar(value):
@@ -245,18 +194,9 @@ def _live_segment_record(segment: dict[str, Any], dropped: set[str]) -> dict[str
 def _bounded_live_value(key: str, value: Any, dropped: set[str]) -> tuple[bool, Any]:
     """Every other projected field: the same shape, bounded in size.
 
-    `segments` gets the strict scalars-only rule above, because that is where
-    per-chunk telemetry keeps being added. The rest (`ai_board`, `human_board`,
-    `lives`, `wins`, `ai_actions`, ...) are STRUCTURE the page renders, so they
-    keep their shape -- what is bounded is how big they are allowed to get. A
-    board that grew a fat subtree, or a status string that grew into a blob, is
-    dropped rather than shipped, and the drop is counted where an operator can
-    see it (`DuelApp._payload_dropped`).
-
     Returns `(keep, projected)`. A field that cannot be made small enough is
     left OUT of the record rather than replaced by a placeholder: the page
-    already treats every one of these as optional (`t.lives ? ... : '-'`).
-    """
+    already treats every one of these as optional (`t.lives ? ... : '-'`)."""
     if _is_live_scalar(value):
         if _scalar_fits(value):
             return True, value
@@ -339,20 +279,15 @@ class DuelApp:
         self._calculator_link_fn = calculator_link_fn
         self.archive = DuelArchive(Path(archive_root)) if archive_root is not None else None
 
-        # exp16 show-value. OFF is a real arm, not a debug switch: acceptance 4
-        # of `DESIGN_show_value.md` is a byte-identity check of a fixed duel
-        # panel with the feature on and off, and it needs both.
+
         self.show_value = bool(show_value)
         self.value_action_cap = int(value_action_cap)
         self._build_value_probe_fn = build_value_probe_fn
         self.value_probe: Any | None = None
         self.value_probe_error: str | None = None
         self.value_log: ValueLog | None = None
-        # One value request at a time. The AI's own search is a single-threaded
-        # Python loop on a wall-clock budget, so a burst of probes on the HTTP
-        # threads is GIL time taken off it. Serialising them bounds that to one
-        # probe's worth; the remaining interaction is measured and stated in
-        # `RESULTS_show_value.md` rather than hidden.
+
+
         self._value_lock = threading.Lock()
 
         self.catalog = load_turtle_catalog()
@@ -391,10 +326,10 @@ class DuelApp:
         # The workers never take `_lock`, so neither the node bridge nor link
         # generation can hold up an `/api/duel/end_turn` response.
         self._render_executor = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="exp16-duel-render"
+            max_workers=2, thread_name_prefix="duel-render"
         )
         self._archive_render_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="exp16-duel-archive-render"
+            max_workers=1, thread_name_prefix="duel-archive-render"
         )
         self._render_lock = threading.RLock()
         self._render_futures: set[Future[Any]] = set()
@@ -463,7 +398,7 @@ class DuelApp:
         self._archive_shutdown.set()
 
     def _reset_renders(self) -> None:
-        """Invalidate results and cancel every obsolete job not yet running."""
+        """Reset renders."""
         with self._render_lock:
             for future in tuple(self._render_futures):
                 self._queue_archive_fallback_locked(future)
@@ -484,10 +419,7 @@ class DuelApp:
             }
 
     def _ensure_agent(self) -> bool:
-        """Build the agent once, on the first game. Torch is imported here and
-        nowhere else in the process, which is what keeps `/sandbox` and
-        `/api/state` working on a box with no checkpoints (exp16 PLAN risk 7).
-        """
+        """Ensure agent."""
         if self.agent is not None:
             return True
         try:
@@ -526,15 +458,7 @@ class DuelApp:
         gear: str | None = None,
         search_width: int | None = None,
     ) -> dict[str, Any]:
-        """Start a fresh duel. Returns the same envelope every mutation does.
-
-        Amendment 6: the two knobs the settings card owns (`deepen_width` and
-        `turn_budget_s`) are applied HERE and nowhere else, so one game is
-        played end to end under one setting and `ai_version` can name it.
-        Both are validated before the old game is touched -- a rejected value
-        leaves the previous game playable rather than destroying it and then
-        failing.
-        """
+        """Start a fresh duel. Returns the same envelope every mutation does."""
         with self._lock:
             if not self._ensure_agent():
                 return {"ok": False, "error": self.agent_error, "state": self.snapshot()}
@@ -572,9 +496,8 @@ class DuelApp:
             # ones, so that turn keeps reading the recommender it started on.
             self._install_settings(pending)
             if seed is None:
-                # `time.time_ns()` rather than `random`: the seed is written
-                # into the archive (W6) and must not depend on a global RNG
-                # some other module may have reseeded.
+
+
                 seed = int(time.time_ns() % DEFAULT_SEED_SPACE)
             self.game_seed = int(seed)
             self.seeds = {
@@ -609,9 +532,8 @@ class DuelApp:
                 else None
             )
             self._submit_ai_turn()
-            # Published last. A lock-free status call that began before this
-            # point carries the old token, so the browser rejects that whole
-            # mixed payload after pinning this response's new game.
+
+
             self._game_status_token += 1
             self._turn_start_states = {
                 HUMAN: copy.deepcopy(self.session.human.state),
@@ -670,7 +592,7 @@ class DuelApp:
         width: int | None = None,
         turn_budget_s: float | None = None,
     ) -> dict[str, Any]:
-        """Change the fixed-clock budget or lab gear for future turns.
+        """Install a validated search configuration for future turns.
 
         A whole new `AiTurnConfig` is built and swapped in rather than the
         live one mutated: the worker thread may be inside a segment, and a
@@ -714,7 +636,7 @@ class DuelApp:
                 self.worker.config = nxt
             return {"ok": True, "error": None, "state": self.snapshot()}
 
-    # -- Amendment 6: the settings card's two knobs, per game ------------
+
     def _plan_settings(
         self,
         deepen_width: int | None,
@@ -722,85 +644,37 @@ class DuelApp:
         gear: str | None = None,
         search_width: int | None = None,
     ) -> dict[str, Any]:
-        """Validate both knobs and BUILD whatever they need, installing none.
-
-        Raises `ValueError` with the reason. Splitting plan from install is
-        what lets `new_game` refuse a bad value while the previous game is
-        still intact: everything that can fail happens before the first
-        destructive step.
-        """
-        pending: dict[str, Any] = {}
-        if deepen_width is not None:
-            try:
-                width = int(deepen_width)
-            except (TypeError, ValueError):
-                raise ValueError(f"duel_bad_deepen_width:{deepen_width!r}:not_an_integer")
-            if width < 0:
-                raise ValueError(f"duel_bad_deepen_width:{width}:must_be_at_least_0")
-            # The card shows ONE number and 0 means off. `dev8766.sh`'s
-            # `DEEPEN` collapses the same way (<=1 drops the flags entirely),
-            # and the two must not drift apart: a human reading "8" on the
-            # page and "8" in the launcher has to be reading one thing.
-            policy = COMPLETION_V_SEARCH if width >= 2 else COMPLETION_BC_GREEDY
-            realised = width if width >= 2 else 1
-            current = self.agent_config
-            if (
-                str(current.completion_policy) != policy
-                or int(current.completion_width) != realised
-            ):
-                cfg = replace(
-                    current, completion_policy=policy, completion_width=realised
-                )
-                agent = self.agent
-                if agent is None:
-                    raise ValueError("duel_deepen_width_needs_agent")
-                try:
-                    search = self._build_search_fn(
-                        getattr(agent, "bc", None),
-                        getattr(agent, "vgame_scorer", None),
-                        cfg,
-                    )
-                except (TypeError, ValueError, AttributeError) as exc:
-                    # AttributeError is in the list because the agent is
-                    # duck-typed here (a test double carries no scorer); a
-                    # rebuild that cannot be attempted must be refused with
-                    # the old setting intact, not raised past the caller as a
-                    # 500 that has already half-started a game.
-                    raise ValueError(f"duel_bad_deepen_width:{width}:{exc}") from exc
-                pending["agent_config"] = cfg
-                pending["search"] = search
-        if turn_budget_s is not None:
-            try:
-                budget = float(turn_budget_s)
-            except (TypeError, ValueError):
-                raise ValueError(f"duel_bad_turn_budget_s:{turn_budget_s!r}:not_a_number")
-            if not budget > 0.0:
-                raise ValueError(f"duel_bad_turn_budget_s:{budget}:must_be_positive")
-            pending["turn_budget_s"] = budget
-        # W11a. The fixed-width gear was never removed from the code -- only
-        # the page's selector was -- so this is wiring, not a new gear.
-        # `measured` pins each segment to `width`; `full-clock` generates
-        # until the segment's slice runs out, capped by the safety valve.
-        if gear is not None:
-            if str(gear) not in GEARS:
-                raise ValueError(f"duel_bad_gear:{gear!r}:expected_one_of={list(GEARS)}")
-            pending["gear"] = str(gear)
-        if search_width is not None:
-            try:
-                width = int(search_width)
-            except (TypeError, ValueError):
-                raise ValueError(f"duel_bad_search_width:{search_width!r}:not_an_integer")
-            if width < 1:
-                raise ValueError(f"duel_bad_search_width:{width}:must_be_at_least_1")
-            # A ceiling as well as a floor. Under `resample-clock` the width is
-            # a commitment the clock waits for, so an unbounded one is an
-            # unbounded turn; the card's own input carries the same `max`, and
-            # the two are the same constant so they cannot drift.
-            if width > MAX_SETTABLE_SEARCH_WIDTH:
-                raise ValueError(
-                    f"duel_bad_search_width:{width}:must_be_at_most_{MAX_SETTABLE_SEARCH_WIDTH}"
-                )
-            pending["search_width"] = width
+        """Validate a public preset and prepare its search configuration without installing it."""
+        for supplied, expected, label in (
+            (deepen_width, COMPLETION_WIDTH, "w"),
+            (search_width, ROOT_WIDTH, "root"),
+        ):
+            if supplied is not None and supplied != expected:
+                raise ValueError(f"The demo fixes {label} at {expected}.")
+        mode = gear if gear is not None else public_mode(self.ai_config.gear)
+        # An obsolete process setting must not become a new game's preset.
+        if gear is None and mode not in SEARCH_MODES:
+            mode = "grow-k"
+        selected_gear = engine_gear(str(mode))
+        seconds = turn_seconds(turn_budget_s if turn_budget_s is not None else DEFAULT_TURN_SECONDS)
+        pending: dict[str, Any] = {
+            "gear": selected_gear,
+            "search_width": ROOT_WIDTH,
+            "turn_budget_s": seconds,
+        }
+        current = self.agent_config
+        cfg = replace(
+            current, width=ROOT_WIDTH, completion_policy=COMPLETION_V_SEARCH,
+            completion_width=COMPLETION_WIDTH, stochastic_samples=INITIAL_SAMPLES,
+        )
+        if cfg != current:
+            agent = self.agent
+            if agent is None:
+                raise ValueError("Agent is not ready.")
+            search = self._build_search_fn(
+                getattr(agent, "bc", None), getattr(agent, "vgame_scorer", None), cfg,
+            )
+            pending.update(agent_config=cfg, search=search)
         return pending
 
     def _install_settings(self, pending: dict[str, Any]) -> None:
@@ -832,8 +706,8 @@ class DuelApp:
     def gear_config(self) -> dict[str, Any]:
         cfg = self.ai_config
         return {
-            "gear": cfg.gear,
-            "gears": list(GEARS),
+            "gear": public_mode(cfg.gear),
+            "gears": list(SEARCH_MODES),
             "width": int(cfg.width),
             "finish_turn": bool(cfg.finish_turn),
             "chunk_size": int(cfg.chunk_size),
@@ -841,16 +715,8 @@ class DuelApp:
             "adaptive_chunk_sizes": list(cfg.adaptive_chunk_sizes),
             "turn_budget_s": float(cfg.turn_budget_s),
             "full_clock_max_width": int(cfg.full_clock_max_width),
-            # Amendment 6. `deepen_width` is the SETTINGS CARD's number, where
-            # 0 means off; the two fields under it are what that number
-            # actually became. They are reported together because the mapping
-            # is lossy in one direction (both 0 and 1 mean bc_greedy/1), and a
-            # page showing only the dial could not say what ran.
-            #
-            # Read from `agent_config`, not from the built agent, so the card
-            # has a default before the first game -- building the agent is
-            # what imports torch and it deliberately does not happen until
-            # someone starts playing.
+
+
             "deepen_width": (
                 int(self.agent_config.completion_width)
                 if str(self.agent_config.completion_policy) == COMPLETION_V_SEARCH
@@ -863,11 +729,8 @@ class DuelApp:
 
     # -- the human's shop phase -----------------------------------------
     def apply(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """One human action, or one composed group (W4's `{"compose": ...}`).
-
-        Response shape is `App.apply`'s, so the shop skin's own `applyAction`
-        / `applyCompose` drive this without knowing it is a duel.
-        """
+        """Response shape is `App.apply`'s, so the shop skin's own `applyAction`
+        / `applyCompose` drive this without knowing it is a duel."""
         with self._lock:
             session = self.session
             if session is None:
@@ -930,14 +793,7 @@ class DuelApp:
         return action, None
 
     def undo(self) -> dict[str, Any]:
-        """Undo the human's last action -- WITHIN the current turn only.
-
-        exp16 PLAN risk 7: the battle oracle is an unseeded Monte Carlo (here
-        it is seeded per (game, turn), which is stronger), so an undo that
-        could reach back across a resolved turn would let a lost battle be
-        replayed until it is won. `DuelSession.undo_human_action` refuses at
-        the turn boundary; this method only forwards the refusal.
-        """
+        """Undo the human's last action -- WITHIN the current turn only."""
         with self._lock:
             session = self.session
             if session is None:
@@ -946,16 +802,9 @@ class DuelApp:
             out["state"] = self.snapshot()
             return out
 
-    # -- exp16 show-value ------------------------------------------------
-    def _human_race(self, session: DuelSession) -> dict[str, int]:
-        """The human decision's driver-true bypass block.
 
-        The same four scalars `search_recommender._race_scalars` builds for the
-        AI, read off the session rather than off the board, because `wins` is
-        the one the board does not carry (RESULTS_W1 finding 2's Vic semantics:
-        PRE-battle cumulative wins) and a scorer that guesses it is a silent
-        train/serve skew.
-        """
+    def _human_race(self, session: DuelSession) -> dict[str, int]:
+        """The human decision's driver-true bypass block."""
         return {
             "turn": int(session.human.state.get("turn", 0) or 0),
             "lives": int(session.human.lives),
@@ -974,16 +823,8 @@ class DuelApp:
     def value(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """`POST /api/infer/value`: what the agent thinks a board is worth.
 
-        Narrow by design (`DESIGN_show_value.md` section 4): a board, a flag for
-        whether to greedily complete the turn first, and optionally the legal
-        actions. Never a search -- `/api/infer/recommend` is where search-quality
-        numbers come from, and putting a search-backed and a single-forward
-        number side by side with no way to tell them apart is exactly what the
-        design's non-goals forbid.
-
         The board defaults to the duel's LIVE HUMAN board, which is the whole
-        point of the feature; `state` overrides it for any other board.
-        """
+        point of the feature; `state` overrides it for any other board."""
         request = payload if isinstance(payload, dict) else {}
         if not self.show_value:
             return {"ok": False, "error": "value_display_disabled", "value": None}
@@ -1077,16 +918,7 @@ class DuelApp:
         ai_state_before: dict[str, Any],
         ai_actions: list[dict[str, Any]],
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str | None]:
-        """Both sides' end-of-turn boards for THIS turn, valued the same way.
-
-        Level B on each: both boards are end-of-turn afterstates by
-        construction, so neither is completed and neither carries level C's
-        conditional wording. The AI's board is reconstructed by replaying the
-        chain it actually played, which is the same replay the search scored a
-        candidate on -- so this is `DESIGN_show_value.md`'s level A, obtained
-        without threading a new field through `segmented_turn.py` (exp13's ruler
-        path) or through the archive schema.
-        """
+        """Both sides' end-of-turn boards for THIS turn, valued the same way."""
         probe = self.value_probe
         if probe is None:
             return None, None, self.value_probe_error or "value_probe_unavailable"
@@ -1209,11 +1041,8 @@ class DuelApp:
                     "state": self.snapshot(),
                 }
             if session.done or self._forced_end:
-                # `_forced_end` is this layer's own terminal state (two AI
-                # failures in a row, a failed duel step). The session itself
-                # may still think the game is playable, and playing on after
-                # the game was declared over is exactly the "quietly weaker
-                # opponent" this wave refuses.
+
+
                 return {
                     "ok": False,
                     "error": f"duel_over:{self._forced_end or session.end_reason}",
@@ -1239,10 +1068,8 @@ class DuelApp:
                 copy.deepcopy(tr.get("action") or {})
                 for tr in session.human.history[human_history_mark:]
             ]
-            # exp16 show-value: both sides' PRE-battle cumulative wins, read
-            # before the battle moves them. This is the `wins` the V bypass is
-            # denominated in, and it is also the base of the realised
-            # return-to-go the log fills in at game end.
+
+
             human_wins_before = int(session.human.wins)
             ai_wins_before = int(session.ai.wins)
             t_end_turn = self._clock()
@@ -1381,11 +1208,8 @@ class DuelApp:
         human_transitions: list[dict[str, Any]],
         ai_transitions: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """Everything the page shows about one turn, and everything W6 archives.
-
-        Search counts, deadline minima, and throughput are recorded from the
-        worker's own result rather than re-derived from UI timing.
-        """
+        """Search counts, deadline minima, and throughput are recorded from the
+        worker's own result rather than re-derived from UI timing."""
         ai_ok = bool(ai_result.get("ok"))
         code = ai_result.get("error")
         record: dict[str, Any] = {
@@ -1423,17 +1247,12 @@ class DuelApp:
             "dedup_ratio": ai_result.get("dedup_ratio"),
             "leaves_evaluated": int(ai_result.get("leaves_evaluated") or 0),
             "safety_cap_hit": bool(ai_result.get("safety_cap_hit")),
-            # exp16 A3, turn totals over the segments below. Built HERE and not
-            # summed at read time because this record is the durable artifact:
-            # a reader a month from now gets the denominator without having to
-            # know that a segment reporting a null policy is out of it.
+
+
             "completion_decided": ai_result.get("completion_decided"),
             "completion_divergent": ai_result.get("completion_divergent"),
-            # W11b, and RAW like the two above. The replay page's per-turn card
-            # reads the TURN, so without these every game said "k samples not
-            # recorded" -- including one that had just added seven levels.
-            # None means no segment searched, which is not the same as k=3 and
-            # must not render as it.
+
+
             "realised_stochastic_samples": ai_result.get("realised_stochastic_samples"),
             "extra_sample_levels": ai_result.get("extra_sample_levels"),
             "completion_dropped": ai_result.get("completion_dropped"),
@@ -1699,9 +1518,8 @@ class DuelApp:
                 key[0], key[1], bytes(image), calculator_link=calculator_link
             )
         except Exception as exc:
-            # Keep already-produced W6a bytes. If record_turn failed first,
-            # the next successful turn sync can attach these without another
-            # replay-bot process.
+
+
             with self._archive_pending_lock:
                 self._archive_pending_renders[key] = (bytes(image), calculator_link)
             if key[0] == self.archive_game_id and (
@@ -1793,10 +1611,8 @@ class DuelApp:
         if session is None or not session.human.battle_rows:
             return
         if job is None:
-            # Private callers/tests may request a newer display slot before a
-            # matching battle row exists. Preserve W6a's latest-prefix
-            # coalescing behavior; production end_turn always takes the exact
-            # durable-job branch above.
+
+
             rows = copy.deepcopy(session.human.battle_rows)
             last = copy.deepcopy(rows[-1])
             job = {
@@ -2186,20 +2002,12 @@ class DuelApp:
         return build_public_replay(self.archive.load_game(game_id))
 
 
-
     def archive_value_rows(self, game_id: str) -> dict[str, Any]:
         """The show-value log for an archived game, or an honest absence.
 
-        Read from BESIDE the archive, not from inside `games/<id>/`, because
-        that is where `value_log` deliberately writes it: acceptance 4 of
-        `DESIGN_show_value.md` requires that turning the display on leaves every
-        recorded game byte-identical, so the log is a second artifact next to
-        the game rather than a file within it.
-
         Absence is not an error. Only games played after show-value shipped have
         a log, and nothing back-fills one, so `available: false` with a reason
-        is the ordinary answer for an older game.
-        """
+        is the ordinary answer for an older game."""
         if self.archive is None:
             return {"available": False, "rows": [], "reason": "duel_archive_disabled"}
         return read_value_log(self.archive.root, game_id)
@@ -2211,10 +2019,7 @@ class DuelApp:
         return self.archive.image_bytes(game_id, turn)
 
     def status(self) -> dict[str, Any]:
-        """The thinking badge's poll. Deliberately lock-free -- see the module
-        docstring. Everything read here is either the worker's own
-        lock-protected status or a single attribute read.
-        """
+        """Status."""
         game_status_token = int(self._game_status_token)
         worker = self.worker
         session = self.session
@@ -2255,10 +2060,7 @@ class DuelApp:
         return payload
 
     def _agent_description(self) -> dict[str, Any] | None:
-        """`AgentHandle.describe()` -- the `ai_version` block W6 archives -- or
-        None. Duck-typed so a test double (or a future agent that does not
-        carry checkpoints) simply has no description instead of breaking the
-        page it is described on."""
+        """Agent description."""
         describe = getattr(self.agent, "describe", None)
         if not callable(describe):
             return None
@@ -2311,17 +2113,7 @@ class DuelApp:
         return live
 
     def payload_guard(self) -> dict[str, Any]:
-        """What the live-payload bounds have actually refused, this game.
-
-        THE POINT OF PUTTING IT ON THE WIRE. A ceiling that only exists inside
-        a unit test is a ceiling nobody is standing under: the 2026-08-06 leak
-        was invisible for a whole wave precisely because nothing in production
-        was measuring the thing that got big. This is four numbers and a short
-        list of key names, it costs about eighty bytes, and it lets
-        `gate_duel.py` assert the bound on the payload of a REAL browser game
-        rather than on a fixture, and an operator answer "is it leaking again?"
-        with one `curl`.
-        """
+        """What the live-payload bounds have actually refused, this game."""
         return {
             "dropped": sorted(self._payload_dropped),
             "over_ceiling": int(self._payload_over_ceiling),
@@ -2426,25 +2218,15 @@ class DuelApp:
                     "losses": int(session.ai.losses),
                     "draws": int(session.ai.draws),
                 },
-                # There is deliberately no `last_turn` here. It used to be a
-                # byte-for-byte second copy of `turns[-1]`, which is the
-                # FATTEST record in the payload and the one that grows; the
-                # page has always read `turns[turns.length - 1]` instead and
-                # never touched it. `status()` keeps its own five-scalar
-                # `last_turn` summary, which is what the 250 ms poll reads.
+
+
                 "final_human_board": copy.deepcopy(session.human.state.get("team") or []),
             }
         )
         return block
 
     def snapshot(self) -> dict[str, Any]:
-        """`App._snapshot`'s shape for the HUMAN's side, plus the `duel` block.
-
-        Same keys, same meanings, so `static/app.js` renders a duel with the
-        skin it already has. The keys that only make sense on the sandbox page
-        (`predictor_loaded`, the replay-snapshot path) are present and honest
-        rather than absent: the duel has no planner and no sampled opponent.
-        """
+        """`App._snapshot`'s shape for the HUMAN's side, plus the `duel` block."""
         session = self.session
         if session is None:
             return {

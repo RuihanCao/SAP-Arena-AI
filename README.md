@@ -7,7 +7,7 @@ based on version 45 of the game.
 You can evaluate the agent, view its recorded games, and play against it
 locally.
 
-The import package is `sap_ppo`, which is the project's original internal name.
+The Python import package is `sap_ppo`.
 
 ## Installation
 
@@ -19,27 +19,76 @@ and the selected search settings.
 From the repository root, create a virtual environment and install the Python
 dependencies:
 
+Linux / macOS:
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[agents]"
 ```
 
+Windows PowerShell:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e ".[agents]"
+```
+
+Run all commands below from the repository root. The Linux / macOS commands
+assume the virtual environment is activated; the Windows commands use its
+Python executable directly, so activation is not needed.
+
 Battles are simulated by [SAP-Calculator](https://github.com/robertley/SAP-Calculator),
-which runs on Node.js. Clone the following version next to this repository:
+which runs on Node.js. Clone the following version into `third_party/`:
+
+Linux / macOS:
 
 ```bash
-git clone https://github.com/robertley/SAP-Calculator.git ../SAP-Calculator/SAP-Calculator
-git -C ../SAP-Calculator/SAP-Calculator checkout 4d03d89b0c8df346bed9e9f504aefc0494f81155
+git clone https://github.com/robertley/SAP-Calculator.git third_party/SAP-Calculator
+git -C third_party/SAP-Calculator checkout 4d03d89b0c8df346bed9e9f504aefc0494f81155
 ```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/robertley/SAP-Calculator.git third_party\SAP-Calculator
+git -C third_party\SAP-Calculator checkout 4d03d89b0c8df346bed9e9f504aefc0494f81155
+```
+
+Replay images use the original [sap-replay-bot renderer](https://github.com/RuihanCao/sap-replay-bot/tree/ca06ba34bf647b7876d15922c9b24ab0d1dd16a3),
+pinned to `ca06ba34bf647b7876d15922c9b24ab0d1dd16a3`.
+The setup script downloads it into `third_party/sap-replay-bot/` and installs
+Canvas 3.1.2 locally. Run this before evaluation or the local demo.
+
+Linux / macOS:
+
+```bash
+python tools/setup_renderer.py
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe tools\setup_renderer.py
+```
+
+This installs the renderer only; it does not start a Discord bot.
 
 ## Model weights
 
 Download the pretrained BC policy and value model using the download script.
 The files are saved to `models/`.
 
+Linux / macOS:
+
 ```bash
 python tools/fetch_models.py
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe tools\fetch_models.py
 ```
 
 - `bc_attn_v4.zip`: the behavior-cloned policy, trained on human gameplay and
@@ -53,8 +102,16 @@ The pretrained weights are provided under the [MIT License](LICENSE).
 
 Run the agent against the included Arena opponent pool:
 
+Linux / macOS:
+
 ```bash
 python tools/evaluate.py --policy search --games 1000 --out evaluation.json
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe tools\evaluate.py --policy search --games 1000 --out evaluation.json
 ```
 
 The default search configuration uses a root proposal budget of 72, completion
@@ -68,6 +125,26 @@ The command saves:
 
 Use `--gallery-games N` to change the number of games shown, or
 `--gallery-games 0` to disable gallery generation.
+
+Open the generated gallery:
+
+Linux desktop:
+
+```bash
+xdg-open evaluation.gallery/index.html
+```
+
+macOS:
+
+```bash
+open evaluation.gallery/index.html
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-Item .\evaluation.gallery\index.html
+```
 
 Reference results on this opponent pool:
 
@@ -89,13 +166,25 @@ simulated game ends.
 
 Prepare the opponent pool for the demo:
 
+Linux / macOS:
+
 ```bash
 python tools/build_demo_snapshot.py \
     data/opponents/arena_val_pool_deidentified.json.gz \
     data/opponents/demo_snapshot.json.gz
 ```
 
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe tools\build_demo_snapshot.py `
+    data\opponents\arena_val_pool_deidentified.json.gz `
+    data\opponents\demo_snapshot.json.gz
+```
+
 Start the local server:
+
+Linux / macOS:
 
 ```bash
 python -m sap_ppo.tools.play_web \
@@ -104,9 +193,22 @@ python -m sap_ppo.tools.play_web \
     --game-mode arena
 ```
 
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe -m sap_ppo.tools.play_web `
+    --host 127.0.0.1 --port 8765 `
+    --snapshot-path data\opponents\demo_snapshot.json.gz `
+    --game-mode arena
+```
+
 Open `http://127.0.0.1:8765/play` to play against the agent. You can also visit
 `http://127.0.0.1:8765/sandbox` to play Arena games against the included opponent
 pool.
+
+The home page at `http://127.0.0.1:8765/` has Play, Sandbox, and Replays buttons.
+Play is a direct duel against the agent using versus rules by default;
+evaluation and the Arena sandbox use the opponent pool instead.
 
 ### Search settings
 
@@ -123,12 +225,39 @@ setup menu.
 
 Generate a gallery from the included game records:
 
+Linux / macOS:
+
 ```bash
 python tools/gallery.py
 ```
 
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe tools\gallery.py
+```
+
 Open `gallery/index.html` in your browser to view each game turn by turn,
 including the agent’s team, the opponent’s team, and the battle result.
+Each game also has a PNG replay image in the same folder.
+
+Linux desktop:
+
+```bash
+xdg-open gallery/index.html
+```
+
+macOS:
+
+```bash
+open gallery/index.html
+```
+
+Windows PowerShell:
+
+```powershell
+Invoke-Item .\gallery\index.html
+```
 
 ## Data
 

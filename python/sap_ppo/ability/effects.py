@@ -258,36 +258,14 @@ def has_level3_friend(state: dict[str, Any], actor_team_index: int | None) -> bo
 
 
 def mark_structural(ctx: Any) -> None:
-    """Record that this ability resolution wrote a field `legal_actions` reads.
-
-    exp13 PLAN Amendment A2.1 -- see `queue.AbilityRuntimeContext`. `ctx` is
-    keyword-REQUIRED at every call site rather than defaulted, so a helper that
-    starts writing the read-set cannot silently forget to report it.
-
-    Amendment A4, as revised after the W1a-3 review, reports it to the STEP's
-    taint object rather than to this resolution: a read-set write is a cut when
-    anything has already drawn in this step, and the draw that steered it is
-    usually several runtimes back (see `engine.StepCausality`).
-    """
+    """Record that this ability resolution wrote a field `legal_actions` reads."""
     ctx.structural_used = True
     if ctx.causality is not None:
         ctx.causality.note_structural()
 
 
 def mark_random(ctx: Any) -> None:
-    """Record a draw whose OUTCOME feeds what this resolution goes on to write.
-
-    exp13 PLAN Amendment A4, the mirror image of `mark_structural`: the drawing
-    code declares its own causal reach, so a future random effect that picks
-    what to summon, how much gold to grant or which shop slot to add becomes a
-    cut point the day it lands, with no amendment and no whitelist.
-
-    The event-ORDER tie draw arms the same step taint directly rather than
-    through here, because it has no `ctx` at the point it draws. A4.2 first
-    ruled that ordering could not be causal; the W1a-3 review refuted it with a
-    board where the order decided which of two simultaneously fainting pets
-    acted, and so which slot ended up empty.
-    """
+    """Record a draw whose OUTCOME feeds what this resolution goes on to write."""
     ctx.random_used = True
     if ctx.causality is not None:
         ctx.causality.arm()
@@ -300,16 +278,8 @@ def choose_random_indices(ctx: Any, candidates: list[int], n: int) -> list[int]:
     unique_candidates = sorted(set(int(x) for x in candidates))
     if len(unique_candidates) <= n:
         return unique_candidates
-    # A4: the draw picks WHICH friends this resolution touches, so whatever
-    # this STEP writes from here on is downstream of the dice.
-    #
-    # The first cut of A4 argued here that every caller writes attack/health
-    # only, outside `legal_actions`'s read-set, so this could not cut. The
-    # W1a-3 review refuted that (its F1): health reaching zero is exactly what
-    # REMOVES a pet, and removal writes team occupancy, which IS in the
-    # read-set. Ant's faint buffs one random friend, and that decides who
-    # survives the next hit. The removal happens in the engine's faint chain,
-    # long after this runtime is gone, which is why the taint is per-step.
+
+
     mark_random(ctx)
     return sorted(ctx.rng.sample(unique_candidates, n))
 

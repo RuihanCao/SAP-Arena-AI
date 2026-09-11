@@ -1,32 +1,4 @@
-    /* ------------------------------------------------------------------
-       exp14 SAP skin. The shop phase is one illustrated scene at the live
-       game's own geometry: a 1280x720 stage (16:9, the game's own canvas)
-       over the FieldBuild background, two lanes of pets standing on stone
-       slabs inside the yellow path bands, and the orange action slabs on the
-       dark footer band. Every number below is measured off the reference pack
-       (assets/Shop-Page-Layout.png, a 1279x717 capture of the real shop, plus
-       a live Playwright capture of the same screen), not invented.
 
-       Measured constants, all in the 1280x720 canvas:
-         slab            92 x 54 at 96px pitch, first centre x=254, fill
-                         #bab391, rim #89816b, rim bottom-heavy
-         team lane       slab centre y=300 (0.417 of height)
-         shop lane       slab centre y=492 (0.686 of height)
-         shop food       right-aligned to lane column 8, centre x=1022 (0.80)
-         dark band       top y~607 (0.843), i.e. 0.157 of height
-         HUD chip        plate 40 tall, radius 8 (20%), icon 50 (1.25x) riding
-                         across the plate's left edge, numeral 26 (65%)
-         tier die        34 x 34, radius 7, 3px black keyline inside a 3px
-                         white sticker rim, centre 29px left of the slab centre
-         button          177 x 70 (Roll) / 247 x 70, 4px keyline, radius 10,
-                         base strip 10px (14% of the height)
-       Keylines are pure #000000 everywhere: the game has no soft outline.
-
-       Anything that is tooling rather than game (legal actions, custom
-       action, history, debug add controls, message line) lives below the
-       scene in a collapsible dev drawer, styled as the game's own parchment
-       tooling.
-       ------------------------------------------------------------------ */
     @font-face {
       font-family: "SAPUI";
       src: url("/api/font?name=sap-bold") format("opentype");
@@ -124,15 +96,7 @@
       border: 0;
       border-radius: 0;
       overflow: hidden;
-      /* The background art is 2048x1680 and the live game does not fit it to the
-         canvas: it stretches it and crops the top. Fitting the art's own three
-         landmarks (its two path-band tops at 45.0% and 70.9% of the art, its
-         hedge top at 90.3%) to where the reference capture puts them in the
-         canvas (0.354, 0.624, 0.843 of 720) gives 776px tall at -96px, which
-         lands all three within 5px. The 44px the art then leaves at the bottom
-         is filled with the art's OWN hedge colour: round 3 filled it with the
-         page green instead, which is a different green from this pack's hedge
-         and drew a visible flat pad across the bottom of the scene. */
+
       background-color: #152c11;
       background-image: url("/api/background");
       background-size: 100% 776px;
@@ -145,13 +109,7 @@
     }
 
     /* ============================ 1. HUD ============================== */
-    /* Chip anatomy, re-measured on the reference at 1px in round 4. The whole
-       four-chip group is 311 x 33 starting at x=7, y=7 of the canvas, and each
-       chip is an icon 33px across riding on the left edge of a white rounded
-       plate that is only 27 tall and hugs its own numeral: the four assemblies
-       measure 67 / 67 / 61 / 88 wide with 7 / 13 / 8 between them, so the
-       plates are NOT one fixed width. Radius 6 on the 27px plate, keyline 3,
-       numeral 21 (cap height 16 on the reference) and italic. */
+
     .hud {
       position: absolute;
       /* the group's left edge is the first icon at x=7; the flex box starts at
@@ -238,9 +196,7 @@
     .mode-tile svg { width: 22px; height: 22px; display: block; }
 
     /* ======================== 2/3/4. lanes =========================== */
-    /* Lanes are pinned by the slab's bottom edge. Re-measured at 1px in round
-       4 on the reference's own slab rims: team slabs bottom at y=327 (which
-       round 3 already had), shop slabs at y=522 (round 3 had 519). */
+
     .lane {
       position: absolute;
       left: 0;
@@ -427,10 +383,7 @@
       pointer-events: none;
     }
 
-    /* ---- attack / health badges: sticker plates on the slab's front edge ----
-       Sized off the reference: its shop heart paints 28px of red, straddling
-       the slab's bottom edge at y 510-537 with the slab bottom at 522. That is
-       20% larger than round 3 drew it and hangs 10px lower. */
+
     .badges {
       position: absolute;
       left: 50%;
@@ -538,11 +491,7 @@
     .copy-badge {
       position: absolute;
       z-index: 7;
-      /* exp16 W5.1: at the unit's feet, centred, BELOW the attack/health
-         badges. It used to sit at 142px -- its own row above the tier die --
-         where Ruihan read it as crowding the top of the slot. The badge plates'
-         painted ink bottoms out ~15px below the slab line (see `.badges`), so
-         -50px clears them and still leaves ~67px to the action bar at y=643. */
+
       bottom: -50px;
       left: 50%;
       transform: translateX(-50%);
@@ -558,12 +507,7 @@
       pointer-events: none;
     }
 
-    /* freeze affordance, folded onto the tier die (round 4).
-       The reference gives a shop slot exactly ONE white sticker, so the freeze
-       toggle no longer owns a second permanent chip beside the die: it is the
-       same 40px box drawn directly over the die, invisible until the pointer is
-       on it, and it paints the die's plate with ice and a snowflake while
-       hovered or while the slot is frozen. */
+
     .freeze-toggle {
       position: absolute;
       left: calc(50% - 29px);
@@ -637,11 +581,7 @@
     /* The game's own big white card: thick black border, the name in orange
        caps, a gold tier circle, and the ability sentence for the pet's level.
        It replaces reading a name out of a tooltip. */
-    /* Measured on the reference at 1px in round 4: the card is 330 x 128 at
-       x 825-1155 and y 208-336, which is 125px in from the scene's right edge,
-       with a 5px keyline and a radius of 10. It carries exactly three things -
-       thumb, name, tier coin, then the rule, then one ability line - and no
-       stat row, so the round-3 third row is gone. */
+
     .info-card {
       position: absolute;
       right: 125px;
@@ -845,9 +785,7 @@
       align-items: center;
       gap: 9px;
     }
-    /* The label was set 20% small in round 3: the reference paints 27px of ink
-       for "Freeze" where round 3 painted 23, and it lets the icon run right up
-       to the keyline instead of leaving a 14px margin. */
+
     .action-btn {
       position: relative;
       height: 70px;

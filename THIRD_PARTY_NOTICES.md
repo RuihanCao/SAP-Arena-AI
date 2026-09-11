@@ -27,8 +27,10 @@ license notice embedded in its game-data module are preserved:
 
 ## External game materials
 
-[SAP-Calculator](https://github.com/robertley/SAP-Calculator) is downloaded
-separately. Game artwork is read from the user's local Calculator checkout;
+[SAP-Calculator](https://github.com/robertley/SAP-Calculator) and the
+[sap-replay-bot renderer](https://github.com/RuihanCao/sap-replay-bot/tree/ca06ba34bf647b7876d15922c9b24ab0d1dd16a3)
+are downloaded separately. Replay-bot's package declares the ISC License;
+its source is used without modification. Game artwork is read from these local checkouts;
 no original game artwork is included in this repository.
 
 This project's MIT License does not grant rights to Super Auto Pets, its game

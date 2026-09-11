@@ -42,16 +42,7 @@ def _action_type_for_index(core_env: Any, action_index: int | None) -> str:
 
 
 def classify_episode_outcome(final_state: dict[str, Any]) -> tuple[str, str]:
-    """(outcome, win_definition) for one finished episode's final state.
-
-    exp09 W5 P1 (cross-model review finding): the old inline accounting
-    counted wins ONLY as `trophies >= 7`, which is the ARENA condition --
-    in versus mode trophies never move and a win is the OPPONENT reaching 0
-    lives, so every W5 versus win was reported as a "draw". Versus states
-    (game_mode == versus with a numeric `meta.versus.opponent_lives`) are
-    now classified by the lives race; everything else keeps the legacy
-    arena rule unchanged.
-    """
+    """(outcome, win_definition) for one finished episode's final state."""
     trophies = int(final_state.get("trophies", 0) or 0)
     lives = int(final_state.get("lives", 0) or 0)
     meta = final_state.get("meta") if isinstance(final_state.get("meta"), dict) else {}

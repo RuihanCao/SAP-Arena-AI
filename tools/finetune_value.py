@@ -14,12 +14,7 @@ It keeps the supplied model's encoder weights, feature normalization, leaf map
 and value scale. No prefix-ranking objective is added. Best validation MSE
 selects the saved epoch. --extractor-checkpoint is the ORIGINAL BC ZIP pinned
 by the V artifact, not whichever BC proposer you currently use for search.
-The input weights are never overwritten; --out must be a fresh directory.
-
-Example: python tools/finetune_value.py --train train.jsonl --val val.jsonl
-  --heads models/vgame_heads_w3b.pt --extractor-checkpoint models/bc_attn_v4.zip
-  --out results/value
-"""
+The input weights are never overwritten; --out must be a fresh directory."""
 from __future__ import annotations
 
 import argparse

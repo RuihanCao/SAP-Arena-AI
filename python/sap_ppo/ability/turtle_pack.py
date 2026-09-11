@@ -74,9 +74,8 @@ def _damage_after_mitigation(slot: dict[str, Any], incoming_damage: int) -> int:
         _remove_status_effect(slot, "status-melon-armor")
         return 0
     if "status-garlic-armor" in effects:
-        # Garlic takes 2 off, floored at 2, and never RAISES the hit: a
-        # 1-damage hit stays 1 (Ruihan 2026-08-02). The plain max(2, d - 2)
-        # this replaces turned a 1 into a 2.
+
+
         return min(damage, max(2, damage - 2))
     return damage
 
@@ -736,25 +735,8 @@ def _ability_purchase_food_cat(state: dict[str, Any], event: AbilityEvent, ctx: 
         return
 
     mult = _level_value(event.actor_level, (2, 3, 4))
-    # Cat scales from the current food effect value at purchase time (including
-    # slot overrides like Milk 2/4), then stacks additively across Cats.
-    #
-    # A trigger is consumed only when that multiplication has something to
-    # multiply. `_pending_food_ctx` is set on EVERY food purchase and carries
-    # 0/0 for any item `FOOD_STAT_BUFFS` does not price -- the sleeping pill,
-    # chocolate and every equipment food -- so without this check a stats-free
-    # purchase adds zero and burns one of the two triggers anyway.
-    # Ruihan found that by playing (2026-08-12). The predicate is the
-    # multiplication's own operand rather than a food whitelist beside the
-    # table that already prices them, so a slot override (Milk 2/4) counts and
-    # a future stats-free food needs no edit here.
-    #
-    # Canned food is priced by that table as of 2026-08-13 and therefore
-    # arrives here as 1/1 and DOES consume a trigger (Ruihan, same ruling that
-    # produced the check above): its stats reach the shop pets rather than a
-    # team pet, but they are stats, so Cat multiplies them.  Nothing in this
-    # handler is special-cased for it -- it is reached through the same
-    # operand -- which is the whole reason the predicate is the operand.
+
+
     base_attack = int(pending.get("cat_base_attack", pending.get("attack", pending.get("base_attack", 0))))
     base_health = int(pending.get("cat_base_health", pending.get("health", pending.get("base_health", 0))))
     if base_attack == 0 and base_health == 0:

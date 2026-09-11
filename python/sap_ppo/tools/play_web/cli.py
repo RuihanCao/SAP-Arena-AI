@@ -11,6 +11,7 @@ from pathlib import Path
 from ...api import skip_imagined_validation
 from ..search_recommender import COMPLETION_TAILS
 from .agent import demo_agent_config
+from .public_settings import SEARCH_MODES, engine_gear
 from .ai_worker import DEFAULT_TURN_BUDGET_S, GEAR_RESAMPLE_CLOCK, GEARS, AiTurnConfig
 from .app import (
     DEFAULT_GAME_MODE,
@@ -52,7 +53,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--opponent-source",
         type=str,
-        choices=["db", "snapshot"],
+        choices=["snapshot"],
         default=str(os.getenv(OPPONENT_SOURCE_ENV, DEFAULT_PLAY_WEB_OPPONENT_SOURCE)).strip().lower(),
     )
     parser.add_argument(
@@ -61,92 +62,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=Path(str(os.getenv(SNAPSHOT_PATH_ENV, str(DEFAULT_REPLAY_SNAPSHOT_PATH))).strip()),
     )
     parser.add_argument("--game-mode", type=str, choices=["versus", "arena"], default=DEFAULT_GAME_MODE)
-    parser.add_argument("--predictor-path", type=Path, default=DEFAULT_PREDICTOR_PATH)
-    parser.add_argument("--value-model-path", type=Path, default=DEFAULT_VALUE_MODEL_PATH)
-    parser.add_argument("--planner-depth", type=int, default=6)
-    parser.add_argument("--planner-beam-width", type=int, default=12)
-    parser.add_argument("--planner-samples-per-stochastic-action", type=int, default=3)
-    parser.add_argument("--planner-oracle-rerank-top", type=int, default=5)
-    parser.add_argument("--planner-oracle-sims", type=int, default=250)
-    parser.add_argument("--planner-predictor-top-k", type=int, default=5)
-    # Default None rather than the viewer's own constant: resolving that
-    # constant here would import the viewer at startup, which a tree that does
-    # not ship it cannot do. The App resolves the real default when the viewer
-    # is available.
-    parser.add_argument("--replay-cache", type=Path, default=None,
-                        help="raw-replay jsonl.gz for the /replay player "
-                             "(optional; the viewer is disabled without it)")
+    parser.set_defaults(
+        predictor_path=None, value_model_path=None, replay_cache=None,
+        planner_depth=6, planner_beam_width=12, planner_samples_per_stochastic_action=3,
+        planner_oracle_rerank_top=5, planner_oracle_sims=250, planner_predictor_top_k=5,
+    )
 
-    # exp16 W5: the duel at /play. Constructing it is cheap (a fixture read and
-    # the catalog); the agent and torch are not loaded until the first game.
+
     parser.add_argument("--no-duel", dest="duel", action="store_false", default=True,
-                        help="serve /sandbox and /replay only; /play answers duel_unavailable")
+                        help="disable the AI duel; Sandbox remains available")
     add_duel_rules_argument(parser, default=DEFAULT_DUEL_RULES)
-    parser.add_argument("--duel-gear", type=str, choices=list(GEARS), default=GEAR_RESAMPLE_CLOCK,
-                        help="resample-clock: grow k (default); measured: fixed-all; full-clock: laboratory width growth")
-    parser.add_argument("--duel-width", type=int, default=None,
-                        help="root proposals per segment for fixed-all and grow-k (default: 72)")
-    parser.add_argument("--duel-stochastic-samples", type=int, default=12,
-                        help="initial chance samples per stochastic group (default: 12); grow-k adds complete equal-k levels")
-    parser.add_argument("--duel-chunk-size", type=int, default=None,
-                        help="fixed laboratory chunk size (default: 1)")
-    parser.add_argument(
-        "--duel-adaptive-chunks",
-        action="store_true",
-        default=False,
-        help="laboratory opt-in to adaptive batching after benchmark review",
-    )
-    parser.add_argument(
-        "--duel-turn-budget-s",
-        type=float,
-        default=DEFAULT_TURN_BUDGET_S,
-        help="wall-clock seconds per AI turn (default: 105)",
-    )
-    parser.add_argument(
-        "--duel-completion-policy",
-        type=str,
-        choices=("bc_greedy", "v_search"),
-        default="v_search",
-        help=(
-            "what fills the rest of the turn behind a chance node while the "
-            "search is still ranking: v_search (default) takes the maximum V "
-            "over --duel-completion-width completions for each chance sample; "
-            "bc_greedy is a laboratory alternative requiring width 1"
-        ),
-    )
-    parser.add_argument(
-        "--duel-completion-tail",
-        default=None,
-        choices=list(COMPLETION_TAILS),
-        help=(
-            "What a sampled completion does when its walk would stop before "
-            "the turn is over. Default `resample` (draw again past a repeat "
-            "instead of giving up, and do not break at a chance node inside a "
-            "completion). `finish_greedy` hands the tail to the greedy "
-            "decoder; `stop` is the pre-2026-08-21 behaviour and is what "
-            "reproduces results measured before then."
-        ),
-    )
-    parser.add_argument(
-        "--duel-completion-width",
-        type=int,
-        default=4,
-        help=(
-            "imagined completions per chance outcome (default 4); "
-            "must be >= 2 under v_search, or exactly 1 for bc_greedy"
-        ),
-    )
-    parser.add_argument(
-        "--duel-max-width",
-        type=int,
-        default=None,
-        help=(
-            "safety-valve ceiling on candidates generated per segment under the "
-            "fixed clock (default: the code's own, currently 32768). This is NOT "
-            "a search budget: the segment deadline is the normal stop, and a run "
-            "that stops here instead records stop_reason=safety_cap so it is "
-            "visible. Lower it only to reproduce an older run"
-        ),
+    parser.add_argument("--duel-gear", type=str, choices=list(SEARCH_MODES), default="grow-k",
+                        help="grow-k (default) or fixed-all; both use root=72, w=4, initial k=12")
+    parser.add_argument("--duel-turn-budget-s", type=float, default=DEFAULT_TURN_BUDGET_S,
+                        help="seconds per AI turn in Grow k (default: 105; range: 1-600)")
+    parser.set_defaults(
+        duel_width=72, duel_stochastic_samples=12, duel_completion_policy="v_search",
+        duel_completion_width=4, duel_completion_tail=None, duel_chunk_size=None,
+        duel_adaptive_chunks=False, duel_max_width=None,
     )
     parser.add_argument("--duel-turn-cap", type=int, default=30)
     parser.add_argument(
@@ -161,9 +94,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=False,
         help="disable writing games played at /play",
     )
-    # exp16 show-value. On by default -- it is the feature. Off is what
-    # `DESIGN_show_value.md` acceptance 4's byte-identity arm runs on, and what
-    # a server with no recalibration curve on disk would want.
+
+
     parser.add_argument(
         "--no-duel-show-value",
         dest="duel_show_value",
@@ -187,8 +119,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = _build_arg_parser()
     args = parser.parse_args()
-    if args.duel_stochastic_samples < 1:
-        parser.error("--duel-stochastic-samples must be positive")
+    if not 1 <= args.duel_turn_budget_s <= 600:
+        parser.error("--duel-turn-budget-s must be between 1 and 600")
 
     if not args.fixture.exists():
         raise FileNotFoundError(f"Fixture not found: {args.fixture}")
@@ -218,9 +150,8 @@ def main() -> None:
     duel_app: DuelApp | None = None
     if serve_duel:
         agent_config = demo_agent_config(
-            # exp13 W0b' skip lever: imagined walks only, never a committed op.
-            # On for interactive play (W3 measured 2.0x on this path); the
-            # numbers a duel produces are per-turn timings, not eval results.
+
+
             skip_imagined_validation=True,
             completion_policy=str(args.duel_completion_policy),
             completion_width=int(args.duel_completion_width),
@@ -230,7 +161,7 @@ def main() -> None:
             **({"width": int(args.duel_width)} if args.duel_width else {}),
         )
         ai_config = AiTurnConfig(
-            gear=str(args.duel_gear),
+            gear=engine_gear(args.duel_gear),
             width=agent_config.width,
             turn_budget_s=float(args.duel_turn_budget_s),
             adaptive_chunks=bool(args.duel_adaptive_chunks),
@@ -267,33 +198,12 @@ def main() -> None:
     Handler.app = app
     Handler.duel_app = duel_app
     if duel_app is not None:
-        # THE REDEPLOY LINE. `skip_imagined_validation` is set above and has
-        # been for a while, but exp13 PR #101 widened what the flag covers: it
-        # now also skips schema validation inside `legal_actions`, so a service
-        # redeployed from a tree containing that change stops validating the
-        # legal-action mask -- with nothing on screen, in the log, or in the
-        # archive saying so. internal design notes has carried
-        # that as a pending hazard since 2026-08-06 precisely because neither
-        # `:8765` nor `:8766` had been redeployed yet.
-        #
-        # The evidence that it does not change what gets played is exp13's own
-        # byte-identity gate over 63 real decisions
-        # (internal design notes section 7). This line
-        # does not decide anything; it makes the next redeploy announce the
-        # change instead of making it silently.
-        #
-        # STDERR AND `flush=True`, both load-bearing. `ops/play-web/dev8766.sh`
-        # starts the server under `nohup`, where stdout is block-buffered and a
-        # startup line can sit unwritten for the life of the process -- which is
-        # why none of this file's other startup prints appear in `dev.log` until
-        # something flushes them. `BaseHTTPRequestHandler.log_message` writes to
-        # stderr, which is where the log an operator actually reads comes from.
-        # A warning nobody can see is not a warning.
+
+
         print(
             "imagined-walk schema validation: "
             + (
-                "SKIPPED (api.step AND legal_actions, since exp13 PR #101; "
-                "byte-identity gate: see the speedup results notes)"
+                "SKIPPED (api.step and legal_actions on imagined states)"
                 if agent_config.skip_imagined_validation
                 else "ON"
             ),
@@ -315,8 +225,7 @@ def main() -> None:
         f"imagined_validation_skipped={skip_imagined_validation()}"
     )
     print(
-        f"serving commit {build['commit_short']} ({build['head_ref']}) "
-        f"from {build['repo_root']}  [module: {build['module_path']}]"
+        f"SAP-Arena-AI {build['version']} · commit {build['commit_short']}"
     )
     print(
         f"SAP web simulator on http://{args.host}:{args.port} "
@@ -325,8 +234,6 @@ def main() -> None:
         + f", predictor_loaded={bool(app.tempo_predictor is not None)}, value_model_loaded={bool(app.tempo_value_model is not None)}"
         + ")"
     )
-    print(f"replay player (exp09 W2): http://{args.host}:{args.port}/replay "
-          f"(cache={args.replay_cache})")
     if agent_surface:
         print(
             f"agent surface: http://{args.host}:{args.port}/ (= /sandbox)  |  "

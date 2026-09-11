@@ -1,49 +1,12 @@
-"""Chain-BC dataset builder for exp09 W4a Phase B.
-
-Reads the W4a-Phase-A `dataset_v2` JSONL shards (schema `exp09-chain-bc/v2`,
-an internal dataset path, 262,259 (state, action) samples) and builds a flat,
-pre-encoded numpy cache for supervised behavior cloning:
-
-  X.npy               float32 [N, obs_size]  -- v4 one-turn-context state encoding
-  y.npy               int64   [N]            -- ACTION_CATALOG index of the human action
-  game_id.npy         <U64    [N]             -- source game id (cluster-split key)
-  player_skill.npy    float32 [N]             -- per-user max NewRank; RANK_SENTINEL
-                                                  (1500.0) where the player never had one
-  has_rank.npy        bool    [N]             -- True iff player_skill is a REAL rank
-                                                  (False = the 1500.0 sentinel was used)
-  action_kind.npy     <U32    [N]             -- compiler's action_kind string (reporting)
-  synthetic.npy       bool    [N]             -- PLAN decision 3/4 synthetic flag
-  choice_declined.npy bool    [N]             -- turn_meta.choice_declined (PLAN decision 6)
-  retention.npy       <U8     [N]             -- "strict" | "tolerant" (bonus slice key)
-  turn.npy            int32   [N]             -- 1-based turn number (bonus slice key)
-  manifest.json                              -- build params + coverage/NaN checks
-
-Every sample's `action` dict is mapped to its `ACTION_CATALOG` index via the
+"""Every sample's `action` dict is mapped to its `ACTION_CATALOG` index via the
 EXACT key format `sap_ppo.train.env` uses to build `ACTION_INDEX_BY_KEY`
 (imported directly from there, never reimplemented, so the two can never
 silently drift).
 
-Per PLAN.md Rev 4 / STATUS.md corrected framing: dataset_v2 is the
-W2-replay-player-VALIDATED (state, action) stream -- this loader does not
-judge or filter samples by the one-turn-agent's `api.legal_actions`; every
-retained (ok_strict/ok) turn's ops are legitimate BC labels, reorder included.
-Training is UNMASKED end to end; masking belongs only at eval decode time
-(a different module), never here.
-
 Usage (PYTHONPATH=python, from the checkout root, venv python):
 
   # Step 1 -- coverage check only (no state encoding; run this FIRST):
-  python -m sap_ppo.train.chain_bc_dataset --check-coverage
-
-  # Full cache build (parallel across the 14 source shards):
-  python -m sap_ppo.train.chain_bc_dataset --out an internal dataset path --procs 14
-
-  # Smoke slice (exact record count, cut only at a game boundary -- a game's
-  # rows are always contiguous within one shard since serialize.py stripes
-  # whole games per worker):
-  python -m sap_ppo.train.chain_bc_dataset --out an internal dataset path \\
-      --max-samples 25000 --procs 2
-"""
+  python -m sap_ppo.train.chain_bc_dataset --check-coverage"""
 
 from __future__ import annotations
 
@@ -71,8 +34,7 @@ CACHE_FORMAT_VERSION = "exp09-w4a-bc-cache/v1"
 # dropped, never an error.
 DEFAULT_MAX_TURN = 15
 
-# Phase-0 decision (Ruihan, 2026-07-13): players who never have a NewRank on any
-# cached game get this sentinel skill value (has_rank=False marks it as such).
+
 RANK_SENTINEL = 1500.0
 
 DEFAULT_VAL_FRACTION = 0.10
@@ -455,31 +417,6 @@ def load_cache(cache_dir: Path) -> ChainBcCache:
     )
 
 
-# ---------------------------------------------------------------------------
-# Step 2b (exp09 W2 distillation): teacher-row dataset loading.
-#
-# `tools/gen_distill_dataset.py` emits rows in this SAME dataset_v2 sample
-# shape (schema_version left at EXPECTED_SCHEMA_VERSION -- "REUSE the
-# dataset_v2 sample schema... with minimal glue", PLAN.md W2 work item 1),
-# plus five new fields layered on top: `source` ("teacher_v1"),
-# `teacher_margin`, `teacher_score`, `myopic_score`, `candidates_n` (see that
-# module's docstring for exactly what each means). This loader is a
-# deliberately SEPARATE, additive code path from `_encode_records`/
-# `build_cache`/`ChainBcCache` above -- it does not touch any of them (zero
-# risk to the human BC pipeline those already serve) -- because a one-off
-# distillation training run has no need for `build_cache`'s persisted,
-# shard-parallel numpy cache (built once, reused across many human-BC
-# training runs): `train_chain_bc.py --extra-dataset` calls this directly at
-# train start, encoding straight from the raw JSONL row file(s) given (NOT a
-# `dataset_dir`-with-manifest.json the way `discover_shards`/`_read_manifest`
-# require -- "the teacher rows file(s)", PLAN.md W2 work item 3a).
-# Reuses `build_state_encoder`/`map_action_index`/`iter_shard_records`
-# UNCHANGED so a teacher row's state encodes through the EXACT SAME v4
-# pipeline as every human row (verified directly by
-# `gen_distill_dataset.py`'s own encoder-smoke gate: a sample row's
-# `encoder.encode(state)` must match `encoder.size` -- 1993 for v4/turn<=15).
-# ---------------------------------------------------------------------------
-
 TEACHER_SOURCE = "teacher_v1"
 HUMAN_SOURCE = "human"
 
@@ -509,19 +446,7 @@ def encode_extra_dataset_rows(
     observation_mode: str = OBSERVATION_MODE_V4,
     max_turn: int = DEFAULT_MAX_TURN,
 ) -> ExtraDatasetCache:
-    """Encode one or more teacher-distillation JSONL row files directly (no
-    manifest.json / `discover_shards` required -- see section docstring
-    above). `map_action_index` misses are counted (`n_miss`/`miss_examples`)
-    rather than silently dropped without a trace, but -- unlike
-    `build_cache`'s hard-fail contract for the human dataset -- are NOT
-    raised here: `merge_distill_dataset.py`'s gate is the place a nonzero
-    miss count must already have been caught (its own catalog-coverage
-    check runs over every row before training ever starts); a caller that
-    still sees a nonzero `n_miss` here after that gate passed has a real,
-    reportable bug, so `train_chain_bc.py` treats a nonzero `n_miss` from
-    THIS function as a hard error at train time (belt-and-suspenders, not
-    a duplicate gate -- see its own `--extra-dataset` handling).
-    """
+    """Encode extra dataset rows."""
     path_objs = [Path(p) for p in paths]
     encoder = build_state_encoder(observation_mode=observation_mode, max_turn=int(max_turn))
     xs: list[np.ndarray] = []
@@ -580,34 +505,9 @@ def encode_extra_dataset_rows(
     )
 
 
-# ---------------------------------------------------------------------------
-# Step 2b: exp05c eval-manifest holdout exclusion (MUST run before the split)
-# ---------------------------------------------------------------------------
-
 def exclude_games(cache: ChainBcCache, excluded_game_ids: set[str]) -> tuple[ChainBcCache, dict[str, Any]]:
     """Drop every sample whose `game_id` is in `excluded_game_ids`, returning a
-    NEW `ChainBcCache` (the input is never mutated) plus a small report.
-
-    This is how the exp05c eval manifest's games get carved out of the BC
-    training population entirely -- they are the EXTERNAL held-out eval set,
-    so they must land in neither the train split nor the monitoring-val split
-    `split_by_game` produces. Callers MUST call this (when holding out at
-    all) BEFORE `split_by_game`, never after -- filtering after the split
-    would leave the excluded games' *other* samples from the same game
-    scattered across train/val instead of removed altogether, and would not
-    change `split_by_game`'s own game-level shuffle/counts.
-
-    Bug context (exp09 W4a, this session): the exp05c manifest keys games by
-    `participation_id`; this cache's `game_id` is the raw replay's outer `id`
-    field (a DIFFERENT uuid on the same record -- see
-    `replay_compile.serialize.FULL_CACHE` / `tools/build_manifest_holdout_gameids.py`
-    for the id<->participation_id join). Before this fix nobody excluded the
-    manifest's games from BC training at all: all 163 manifest games were
-    present in dataset_v2/this cache, and most landed in rank_v1/flat_v1's
-    TRAIN split -- those checkpoints are not held out w.r.t. the eval
-    manifest. `excluded_game_ids` must be `game_id`-space ids (this cache's
-    own join key), not participation_ids.
-    """
+    NEW `ChainBcCache` (the input is never mutated) plus a small report."""
     game_list = cache.game_id.tolist()
     excluded = {str(g) for g in excluded_game_ids}
     games_present = set(game_list)
@@ -694,17 +594,14 @@ def _rank_weight_components(s: np.ndarray) -> tuple[np.ndarray, float, np.ndarra
 
 
 def compute_train_weights(skill_train: np.ndarray, *, mode: str) -> np.ndarray:
-    """Per-sample weights over the TRAIN split (Ruihan's exact spec):
-
-    rank: s = player_skill (already 1500.0-sentineled for no-rank players by
+    """rank: s = player_skill (already 1500.0-sentineled for no-rank players by
       the cache builder). p = empirical upper-CDF percentile of s within the
       train split (ties share the upper bound). Clamp p in [0.05, 0.95].
       w = 0.5 + p. Renormalize so mean(w) == 1.0 exactly.
     flat: w = 1.0 for everyone.
 
     Validation weights are NOT computed here -- callers must use 1.0 for val
-    (unweighted val metrics), per spec.
-    """
+    (unweighted val metrics), per spec."""
     mode_norm = str(mode or WEIGHT_MODE_RANK).strip().lower()
     n = int(np.asarray(skill_train).shape[0])
     if mode_norm == WEIGHT_MODE_FLAT:

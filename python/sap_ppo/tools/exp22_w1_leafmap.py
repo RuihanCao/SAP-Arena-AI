@@ -1,75 +1,11 @@
-"""exp22 W1: the frozen monotone leaf map that carries V0's head onto MC8.
+"""Fixed monotone calibration from value scores to trophy targets.
 
-WHY THIS EXISTS. `19-trophy-levers/PLAN_W1.md` §3d asked whether `V0`'s output
-head can be carried onto `target_mc8` at all, and returned **case 2**: the two
-quantities differ by a FIXED monotone map, fitted once and frozen, with the
-head's parameters carried over. §3d's own words for case 2 are that "the map is
-named, committed and reported as part of the arm rather than discovered during
-training", so the map is an ARTIFACT here, not a closure: it is fitted, written
-to disk with its provenance, hashed, and evaluated identically by the trainer
-and by the serve path.
+The default fit uses twenty equal-count bins and piecewise-linear interpolation.
+Endpoint knots extend it across the reachable score domain using bounded slopes.
+The resulting map is fixed during head training; interpolation remains
+differentiable between knots. A full-point isotonic fit is also available.
 
-WHAT THE MAP IS. `x` is `V0`'s leaf score, the squashed teacher score on
-`[-0.06, 1.06]` that `vdistill.unsquash_score` produces and that
-`build_w1_training_set` records per completion as `v0_score`. `y` is
-`target_mc8`, trophies to terminal under the pinned BC-greedy continuation, on
-`[0, 10]`. The fit is pool-adjacent-violators isotonic regression, reusing
-`w1_isotonic` verbatim rather than writing a second copy -- that module exists
-precisely because the same fit had been written twice and drifted.
-
-WHY IT IS NOT `recalibration_curve_v1.json`. §3e: that curve's `y` is realised
-return-to-go under **`V0`'s own continuation** while `target_mc8` is
-return-to-go under the **pinned BC-greedy** continuation; on the w1c rows it
-sits **+0.4017** trophies above `target_mc8`, and it was fitted on a different
-row population. It is a refit, not a reuse, and §3e registers that as one of
-β's four changes.
-
-GATE 0c LIVES HERE, and it is fatal. A monotone leaf map is NOT rank-neutral
-where gate 1 grades: a prefix group's score is a mean over its completions
-taken BEFORE the transform, `f(mean) != mean(f)`, and `RESULTS_W1b.md:178`
-measured the resulting argmax flip rate at **15.61% [15.00%, 16.22%]** over 500
-games. A curve fitted on rows that are later scored would move one decision in
-six in a direction the fit chose. So the fitting rows and the graded rows are
-disjoint BY WHOLE GAME, and `assert_fit_rows_disjoint` refuses otherwise.
-
-## Two properties the smoke run forced, and why they are not redesigns
-
-THE MAP IS FITTED ON VENTILE MEANS, NOT ON EVERY POINT. §3d's registered
-instrument was exactly `E[target_mc8 | v0_score]` over 20 ventiles, and its
-answer was "strictly increasing, zero violations". A PAVA fit over every raw
-point returns the same shape with a different problem: it is a STEP function,
-so most of its domain is flat, and a flat segment has zero derivative. The
-head is trained THROUGH this map, so a prediction that lands inside a flat
-block receives no gradient at all. Fitting the registered instrument itself
-gives about twenty knots with strictly positive slope between them, which is
-the same function §3d validated and is differentiable where the trainer needs
-it. `method="isotonic_full"` keeps the every-point fit available so the choice
-stays falsifiable rather than merely argued.
-
-THE KNOTS ARE EXTENDED TO THE HEAD'S REACHABLE BOUNDS RATHER THAN CLAMPED AT
-THE FIT'S. `w1_isotonic.interpolator` clamps outside its knots, which is right
-for a labelling-time recalibration and wrong for a map the head is trained
-through: once Adam moves a prediction past the fitted band the gradient is
-exactly zero and that parameter is frozen for the rest of the run. Measured on
-the 4-game smoke, 2026-08-16: the training value loss rose from 0.3811 to
-0.8867 in one step and then held 0.8867 to four decimal places for twenty-four
-more epochs, identically at `rank_weight` 0.0 and 0.5 -- a flatline, not a
-plateau.
-
-So `add_endpoint_knots` extends the fit to `SCORE_MIN` and `SCORE_MAX`, the
-bounds `unsquash_score(sigmoid(logit))` cannot leave, carrying the end
-segments' own slopes CAPPED so the extrapolation lands exactly on the
-operator's `[0, 10]`. The map then spans the whole reachable domain with
-positive slope, so the evaluator's clamp is never reached from a real forward
-pass and no output clip is needed either -- an output clip was the first
-attempt at this, and its zero derivative at 10 was the same trap one step
-further out. The map stays fixed and monotone, which is all §3d requires.
-
-`fit_leaf_map` records both the fitted `y_range` and the reachable one. Do not
-read a narrow fitted range as a bug on its own: a conditional mean `E[y | x]`
-is under-dispersed relative to `y` by construction, and with the tails in place
-the model is not confined to it.
-"""
+The schema identifier is retained for compatibility with existing checkpoints."""
 
 from __future__ import annotations
 
@@ -97,28 +33,17 @@ TAILS = (TAIL_LINEAR, TAIL_CLAMP)
 # trophies by one of these maps. `vgame_scorer.VALUE_KINDS` branches on it.
 TARGET_MC8_LEAFMAP = "mc8_leafmap_trophies"
 
-# The operator's structural range. Imported rather than redefined would be
-# nicer, but `w1_value_head` pulls torch in and this module is deliberately
-# numpy-only so gate 0c is testable without a checkpoint.
+
 TROPHY_MIN = 0.0
 TROPHY_MAX = 10.0
 
-# The head's own reachable input range: `unsquash_score(sigmoid(logit))` cannot
-# leave `[SCORE_MIN, SCORE_MAX]` whatever the logit does. Mirrored from
-# `train/vdistill.py` rather than imported, to keep this module numpy-only so
-# gate 0c is testable without torch; `test_exp22_w1_train.py` pins the two
-# together so the duplication cannot drift.
+
 SCORE_MIN = -0.06
 SCORE_MAX = 1.06
 
 
 class LeafMapError(RuntimeError):
-    """A fatal leaf-map condition. Gate 0c raises this."""
-
-
-# --------------------------------------------------------------------------
-# Gate 0c -- the fitting rows
-# --------------------------------------------------------------------------
+    """Leafmaperror."""
 
 
 def assert_fit_rows_disjoint(
@@ -127,15 +52,7 @@ def assert_fit_rows_disjoint(
     *,
     where: str = "gate_0c",
 ) -> dict[str, Any]:
-    """Gate 0c. Fatal when the map's fitting games touch the graded games.
-
-    Disjointness is asserted on WHOLE GAMES, not on rows, because
-    `13-compounding/PLAN_W1.md` §Learning-curve unit binds every split and
-    every bootstrap in this family to the game as the cluster: "Rows from one
-    game are clustered together in every bootstrap and split." Two rows of one
-    game share a prefix stream and an opponent chain, so a row-level split
-    would leak the fit into the grading set while reading as disjoint.
-    """
+    """Assert fit rows disjoint."""
     fit = {int(g) for g in fit_game_ids}
     graded = {int(g) for g in graded_game_ids}
     overlap = sorted(fit & graded)
@@ -173,13 +90,7 @@ def assert_fit_rows_disjoint(
 def ventile_monotonicity(
     x: np.ndarray, y: np.ndarray, *, n_bins: int = 20
 ) -> dict[str, Any]:
-    """`E[y | x]` over equal-count bins, and where it goes backwards.
-
-    §3d's registered check was exactly this shape -- "strictly increasing over
-    20 ventiles with zero violations" -- so it is recomputed on whatever rows
-    this refit actually uses rather than inherited from the check that ran on
-    exp13's rows.
-    """
+    """`E[y | x]` over equal-count bins, and where it goes backwards."""
     xs = np.asarray(x, dtype=np.float64).ravel()
     ys = np.asarray(y, dtype=np.float64).ravel()
     if xs.size != ys.size:
@@ -211,13 +122,7 @@ def ventile_monotonicity(
 def fit_ventile_knots(
     x: np.ndarray, y: np.ndarray, *, n_bins: int
 ) -> tuple[list[float], list[float], dict[str, Any]]:
-    """`E[y | x]` over equal-count bins, made monotone, as knots.
-
-    This is §3d's own instrument turned into the map. The bin MEAN of `x` is
-    the knot's abscissa rather than the bin edge, so the knot sits where the
-    bin's mass actually is; PAVA then runs over the bin means, weighted by bin
-    count, and is a no-op whenever the ventile check reports zero violations.
-    """
+    """`E[y | x]` over equal-count bins, made monotone, as knots."""
     order = np.argsort(x, kind="mergesort")
     bins = [idx for idx in np.array_split(order, int(n_bins)) if idx.size]
     if len(bins) < 2:
@@ -271,19 +176,8 @@ def add_endpoint_knots(
 
     Three properties fall out at once, and each replaces something worse:
 
-    - the knots now SPAN everything `unsquash_score(sigmoid(logit))` can
-      produce, so the evaluator's clamp-outside-the-knots rule is never
-      reached from a real forward pass, and the derivative is positive on the
-      whole reachable domain. That is the dead gradient gone;
-    - the output is bounded by construction rather than by an output clip, so
-      there is no `clamp` at `10` whose zero derivative would trap a
-      prediction that overshot. That is the SECOND dead gradient gone, the one
-      the first fix introduced;
-    - the map stays fixed and monotone, which is all §3d requires of it.
-
     A side whose end segment is flat cannot be extended without staying flat,
-    so it is left alone and SAID so rather than given an invented slope.
-    """
+    so it is left alone and SAID so rather than given an invented slope."""
     xs = [float(v) for v in x_knots]
     ys = [float(v) for v in y_knots]
     report: dict[str, Any] = {"tail_left": "clamped", "tail_right": "clamped"}
@@ -323,11 +217,7 @@ def fit_leaf_map(
     tail: str = TAIL_LINEAR,
     provenance: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Fit the frozen monotone map, gate 0c first, and return the artifact.
-
-    The gate runs BEFORE the fit, not after, so a leaking split costs nothing
-    and can never produce a curve that someone then reads a number off.
-    """
+    """Fit leaf map."""
     gate = assert_fit_rows_disjoint(fit_game_ids, graded_game_ids)
     if method not in METHODS:
         raise LeafMapError(f"leafmap_bad_method:{method}:known={list(METHODS)}")
@@ -377,14 +267,14 @@ def fit_leaf_map(
         "kind": method,
         "tail": tail,
         "method": description,
-        "x": "frozen V0 leaf score, the squashed teacher score vdistill.unsquash_score emits",
+        "x": "leaf score emitted by vdistill.unsquash_score",
         "y": (
             f"{target_mode}: return-to-go in trophies on [0, 10] under the "
             "continuation that label mode pins"
         ),
         "purpose": (
-            "19-trophy-levers/PLAN_W1.md 3d case 2: the fixed monotone map that "
-            "carries V0's output head onto the training target, fitted once and "
+             "A fixed monotone map that "
+            "maps the value head output onto the training target, fitted once and "
             "frozen, with the head's parameters carried over"
         ),
         "target_mode": str(target_mode),
@@ -448,22 +338,7 @@ def write_leaf_map(path: Path, artifact: dict[str, Any]) -> Path:
 
 
 class LeafMap:
-    """The frozen map, evaluated identically by numpy and by torch.
-
-    Two evaluators exist because the trainer needs gradients through the map
-    and the serve path does not, and they are checked against each other by
-    `test_exp22_w1_train.py` rather than assumed equal: a map that differed
-    between training and serving would be a train/serve skew that no gate
-    downstream of it could see. Both are the SAME formula -- locate the
-    segment, interpolate linearly, clip to the operator's range -- with the
-    tail rule falling out of which segment a point outside the knots is given
-    rather than being special-cased, so the two cannot drift.
-
-    `TAIL_CLAMP` clamps the INPUT to the knot range, which reproduces
-    `w1_isotonic.interpolator` exactly; `TAIL_LINEAR` leaves the input alone
-    and lets the first or last segment carry it, which is linear extrapolation
-    with that segment's slope. The two differ by one line in each face.
-    """
+    """The frozen map, evaluated identically by numpy and by torch."""
 
     def __init__(self, x_knots: list[float], y_knots: list[float],
                  *, tail: str = TAIL_LINEAR,

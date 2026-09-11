@@ -1,414 +1,14 @@
-"""exp09 W6a: best-of-N search layer over a loaded BC policy.
+"""Search over behavior-cloned action chains.
 
-See internal design notes, the "W6 search layer" bullet and the
-Rev 6.1 "W6 trajectory" addendum ("W6a = measure search gain on flat_v2 (the
-turtle yardstick); W6b = expert iteration"). This module is the W6a
-SUBSTRATE only -- a search-augmented recommender plus the driver flag to use
-it (`tools/eval_versus_fullgame.py --recommender search`) -- not the
-measurement run itself, which happens later on a fresh checkpoint load.
+With segmented-honest value scoring, candidates are grouped by their prefix up
+to the first structural chance node or end of turn. Chance outcomes are sampled
+on independent simulation streams. Each outcome is completed by BC, optionally
+choosing the best of several continuations with V; outcome values are averaged
+to rank prefixes. The caller executes the selected prefix and re-searches after
+observing the real outcome.
 
-`SearchRecommender.recommend(state)` is API-compatible with
-`BcRecommender.recommend` (`tools/bc_recommender.py`): same return-dict
-shape (`ok`/`error`/`recommended_action`/`chain_preview`/`wdl_probs`/
-`diagnostics`), plus `search_*` bookkeeping keys layered on top -- so
-`eval_versus_fullgame.py::play_one_game` can call either recommender through
-the exact same `rec = bc.recommend(state)` / `rec.get("chain_preview")`
-site with no other change (mirrors how `BcRecommender` itself is already a
-drop-in for `eval_tempo_planner.run_eval_cases`, see that class's own
-docstring).
-
-ALGORITHM: generate `n_candidates` full-turn action chains from `state`
-(candidate 0 is always the wrapped recommender's OWN deterministic/greedy
-chain -- byte-identical to what plain `--recommender bc` would have played,
-so search can never do worse than plain BC; candidates 1..N-1 aim for
-diversity, see "candidate diversity" below). Every candidate's chain is
-re-applied from a FRESH `copy.deepcopy` of `state` via `api.step`
-(`_apply_chain`, stopping early at the first illegal/failing step -- the
-board reached so far still counts as that candidate's end board), exactly
-the replay procedure `play_one_game` itself uses on the winning chain, so
-the board this class scores a candidate on is guaranteed to be the board
-the driver will actually reach if that candidate wins. End boards are
-de-duplicated by `visited_guard.state_signature` before scoring, so a board
-reached by more than one candidate costs ONE oracle call, not N. Each
-unique end board is scored against the LAST-SEEN opponent
-(`state["meta"]["versus"]["last_opponent_team"]`, written by
-`train/env.py::_set_last_opponent_team` after every resolved turn -- absent
-on turn 1, before any battle has happened yet) with one
-`simulation_count=ksim` oracle call: `(playerWins - opponentWins) / ksim`
-(PLAN.md's k-sim expected-outcome formula, reused here as a whole-chain
-reranking score -- see `train/gym_env.py::ksim_lives_outcome` for the
-training-time sibling of this same math). The winning candidate's ORIGINAL
-result dict is returned UNCHANGED (so the driver's existing
-`chain_preview`/`recommended_action` consumption keeps working) plus
-`search_*` annotations. If the opponent is unknown (turn 1) or every oracle
-call fails, scoring is skipped entirely and the greedy candidate's own
-result comes back with `search_used=False` -- this can never make a turn
-worse than plain BC, only occasionally no-better.
-
-Candidate diversity (IMPORTANT -- read before assuming more `n_candidates`
-buys more search): `tools/bc_recommender.py::BcRecommender.recommend` is,
-as verified directly against that file, UNCONDITIONALLY a deterministic
-probability-ranked walk -- its `__init__` stores `self.deterministic` but
-the decode loop never reads it back (that class's own constructor comment:
-"no longer consulted by recommend() ... kept only so an existing/future
-caller passing this kwarg doesn't break"). Calling `recommend()` twice on
-the same state therefore always returns a byte-identical chain: toggling
-`bc_recommender.deterministic` around the call, by itself, produces ZERO
-diversity against the real checkpoint. Rather than modify
-`bc_recommender.py` (out of scope for this task -- the brief is a new file
-plus a driver flag, not a BC-decoder refactor), this class carries its OWN
-sampling decode (`_sample_candidate`), reusing the SAME loaded
-model/encoder (`bc_recommender.model`, `bc_recommender.encoder`) and the
-same engine-true `bc_recommender.legal_mask` + `visited_guard.
-state_signature` the wrapped recommender's own greedy walk uses, but
-drawing each step from the masked categorical distribution with a
-candidate-local `numpy.random.Generator` instead of always taking the
-arg-max. `_generate_candidate` takes this path automatically whenever the
-wrapped object exposes that lower-level surface (i.e. a real
-`BcRecommender`); a minimal duck-typed stand-in that only implements
-`.deterministic` + `.recommend()` (as in this module's own unit tests, and
-as an earlier draft of this class's spec assumed was sufficient) has no
-`.model`/`.encoder`, so falls back to literally toggling `.deterministic`
-and calling `.recommend()` again. That fallback path is what the unit
-tests below exercise (their fakes script different chains per call
-directly); it is NOT expected to add diversity against the real
-checkpoint -- only the internal sampling path is.
-
-exp09 W1 "teacher ceiling" ROLLOUT scoring (`scoring="rollout"`, driver flag
-`--search-scoring rollout`; `scoring="myopic"`, the pre-existing behavior
-above, stays the default and is completely UNCHANGED): a second scoring
-mode for the SAME stage-1 candidates (generation + dedup + myopic ksim
-scoring are shared, byte-for-byte, between both modes -- "myopic" simply
-returns right after that shared stage; see `_search`). Purpose: myopic
-scoring reranks candidates by ONE ksim oracle call against the LAST-SEEN
-opponent board -- a purely MYOPIC (next-battle-only) signal that cannot see
-whether a candidate trades this battle for a stronger position two turns
-later (the project owner's tempo-bias concern). Rollout scoring measures
-how much of that ceiling decision-time search can already reach by
-replacing the myopic score, for a SHORTLIST only (full-game simulation is
-too expensive for all 12 candidates), with an estimate of the candidate's
-actual FULL-GAME outcome.
-
-ALGORITHM (two stages; stage 1 identical to myopic):
-1. Generate + dedup `n_candidates` end-boards exactly as myopic does, and
-   score ALL of them with the existing single-ksim-call myopic score (this
-   stage never changes based on `scoring`).
-2. Take the top `rollout_shortlist` deduped candidates BY MYOPIC SCORE
-   (`_search_rollout`). For each, `rollout_repeats` times
-   (`_rollout_score_candidate`): resolve THIS turn's END_TURN battle against
-   the followed opponent chain's actual board this turn
-   (`eval_versus_fullgame.py::_resolve_versus_turn`, `simulation_count=
-   rollout_ksim` -- a steadier signal for the turn actually being decided),
-   then -- if the game is not already over -- play every SUBSEQUENT turn
-   with the plain wrapped recommender's OWN standard decode
-   (`eval_versus_fullgame.py::play_out_game`, `self.bc`, never re-searching)
-   against the SAME chain's actual subsequent boards, to a lives verdict or
-   the turn cap. Score = mean(final outcome: win=1.0, loss=0.0, cap/no-result
-   =0.5) over the repeats, plus `0.01 * mean(own_lives - opp_lives at end)`
-   as a tiebreak. Argmax wins; an EXACT tie breaks by the stage-1 myopic
-   score (`_search_rollout`'s sort key).
-
-ACTUAL-CHAIN-ONLY, NO FUTURE-AVERAGING (Ruihan's explicit design
-constraint, 2026-07-19): every simulated turn -- the candidate's own turn
-AND every subsequent turn of the continuation -- samples the SAME followed
-opponent's ACTUALLY RECORDED chain (`self.opp_source.sample_for_pid`,
-falling back to `.sample_random_with_rng` only when that chain runs out of
-indexed turns, exactly like the real driver). This is privileged
-training-time information (the real future is not observable at true
-decision time) -- accepted for now because the entire point of this
-measurement is a CEILING: "how good could search get if it could see far
-enough ahead", not a deployable recommender. There is deliberately no
-opponent-predictor, no ensemble over K plausible next-boards, and no
-alternate-future branching of any kind -- one real future, replayed. This
-also bounds the comparison: every candidate rolled out this turn is scored
-against the exact SAME future (the outer game has not committed to any of
-them yet), so this is a valid RERANKING of the current turn's choice, not a
-prediction that plants a specific future.
-
-NO shared-state mutation: each repeat runs the continuation on a FRESH
-`copy.deepcopy` of the candidate's end board, and every random-fallback
-draw during a continuation comes from an ISOLATED `random.Random` seeded
-by `(self.seed, self._recommend_call_count, candidate_index, repeat_index)`
--- never `self.opp_source`'s own shared `_random_rng` (see
-`chain_snapshot.py::ChainSnapshotSource.sample_random_with_rng`'s
-docstring for why: a throwaway rollout simulation must not perturb the
-REAL game's own later draws from that same shared source). The exact
-(pid, turn) chain lookup (`sample_for_pid`) is a pure O(1) dict read with
-no mutable state at all, so it is shared directly, unisolated.
-
-exp09 W2 (distillation teacher data generation, `capture_candidate_chains`
-constructor flag, default False -- fully backward compatible, every W1/W6a
-caller is unaffected): when True, `recommend()`'s result additionally
-carries each deduped stage-1 candidate's own `chain_preview` (the action
-sequence, not just its score), aligned index-for-index with `search_scores`
-(myopic mode: top-level key `search_candidate_chains`; rollout mode:
-`search_diagnostics["candidate_chains"]`, aligned with that dict's own
-`myopic_scores`). This costs one extra list of already-computed
-`chain_preview` deep-copies per `recommend()` call -- cheap relative to the
-oracle/rollout calls that dominate this class's cost -- but is skipped
-entirely when the flag is off (default), so no existing measurement run
-(W1, W6a) pays for or changes behavior from this addition. Purpose:
-`tools/gen_distill_dataset.py`'s per-turn sidecar (PLAN.md W2) records the
-full candidate set (not just scores) for later inspection/audit -- see that
-module's docstring.
-
-exp10 W2 (opponent-source ablation, `rollout_opponent_mode` constructor
-kwarg, default `"true"` -- fully backward compatible, byte-identical to
-every existing W1/W6a caller): W1's rollout ceiling (immediately above)
-replays the ACTUAL followed opponent's recorded rest-of-game -- privileged
-information a real decision-time search could never see. This addition
-measures how much of that ceiling survives when the rollout continuation
-follows a DIFFERENT opponent's recorded chain instead, via
-`--rollout-opponent-mode {true,pool_random,retrieval}`
-(`tools/eval_versus_fullgame.py`):
-
-- `"true"` (default): unchanged -- `_rollout_score_candidate` never touches
-  `board_copy`'s followed pid, so `sample_for_pid_fn=self.opp_source.
-  sample_for_pid` keeps resolving against whatever pid the outer game is
-  actually following, exactly as before this addition existed.
-- `"pool_random"`: for each rollout repeat (ONE draw per repeat, same cost
-  as `"true"` -- no K-averaging in this first pass), draw a random pid from
-  `self.opp_source.all_pids` (already exactly the eval frame's own
-  opponent pool -- e.g. val/Turtle/rank<=1500, whatever `opp_source` was
-  constructed with -- see `chain_snapshot.py::ChainSnapshotSource`),
-  EXCLUDING the true followed pid, and splice it into `board_copy["meta"]
-  ["versus"]["current_opponent_participation_id"]` BEFORE this turn
-  resolves. From there the EXISTING sampling plumbing
-  (`resolve_end_turn_with_sampled_battle`'s forced-pid-then-random-
-  fallback logic, completely unmodified) follows that pid's recorded
-  chain turn by turn, falling back to the same isolated
-  `sample_random_with_rng` draw the `"true"` path already uses whenever
-  that chain runs short -- see `_choose_rollout_opponent_pid`.
-- `"retrieval"`: identical to `"pool_random"`, additionally restricted to
-  pids whose indexed chain length is >= the CURRENT turn (a "this
-  candidate opponent's own game had actually reached this turn"
-  plausibility filter -- rank/pack are already pool-wide invariants
-  because `opp_source` itself was constructed with those bounds, so no
-  separate rank/pack check is needed per draw).
-
-Every draw uses an ISOLATED `random.Random` keyed on `(mode, seed,
-recommend_call_count, candidate_index, repeat_index)` -- never
-`self.opp_source`'s own shared state -- for the same reason the existing
-`sample_random_with_rng` fallback draws are isolated (module docstring's
-"NO shared-state mutation" paragraph above): a throwaway ablation draw
-must never perturb the real game's own later draws. For auditability
-(Ruihan's explicit ask: prove the arms actually differ), every mode's
-`_rollout_score_candidate` result additionally carries `true_followed_pid`,
-`repeat_chosen_opponent_pids`, `repeat_fallback_tiers`, and
-`repeat_opponent_pid_traces` (the pid actually used to sample the
-opponent board, per turn, per repeat -- captured via `play_out_game`'s
-existing `on_turn` hook) -- present (empty-safe) for every mode so a
-consumer never needs a schema branch.
-
-exp12 route a, wave A0 -- COMMON RANDOM NUMBERS (`rollout_crn` constructor
-kwarg, driver flag `--rollout-crn`, default False = byte-identical to every
-run before it existed, including the live W2c width arms):
-
-BEFORE this flag, every exogenous draw a rollout continuation makes was
-keyed on `candidate_index`, so the r-th rollout of candidate 0 and the r-th
-rollout of candidate 1 -- two estimates of the SAME decision, differing only
-in the move under evaluation -- faced INDEPENDENT futures: a different
-random-fallback opponent board, a different `pool_random`/`retrieval`
-opponent pid, and a different engine (shop) RNG chain inherited from the
-candidate's own end board. Comparing candidates then pays the full variance
-of the future on top of the variance of the move, which is exactly the noise
-a distillation target must not carry.
-
-WITH `rollout_crn=True`, all three exogenous draws are keyed on
-`(seed, decision_id, repeat_index)` where `decision_id` is `(game_index,
-turn)` -- `candidate_index` is deliberately ABSENT:
-
-- the isolated random-fallback sampler's seed;
-- the `pool_random`/`retrieval` opponent-pid draw;
-- the continuation's engine seed, written into `board_copy["meta"]["seed"]`
-  before this turn resolves (only when the board already carries
-  `seed_known`, never forced on) so every sibling's rest-of-game shops come
-  off the same stream instead of off whatever chain that candidate's own
-  shop actions happened to advance to.
-
-So sibling candidates share repeat r's future, while different repeat
-indices, different turns and different games stay independent. The battle
-oracle itself is NOT under this flag's control and cannot be: the JS
-simulator takes no seed (see `eval_versus_fullgame.py`'s module docstring,
-"nothing seeds the JS simulator's own RNG"), so its Monte-Carlo draw is the
-one residual per-candidate noise source. `--rollout-ksim` (a majority vote
-over k sims) is what damps it.
-
-`set_decision_context(game_index=...)` is how the driver tells this class
-which game it is in; `turn` is read off the state each `recommend()` call.
-Without the call (a direct/unit-test caller), `decision_id` falls back to
-the per-process recommend counter, which is still constant across one
-decision's candidates and distinct across decisions -- so the CRN property
-holds, only cross-process reproducibility is lost.
-
-exp12 route a, wave A0 -- TEACHER RECORD (`capture_teacher_record`
-constructor kwarg, driver flag `--teacher-record-out`, default False):
-when True the rollout result additionally carries a `teacher_record` block
-with EVERY scored stage-1 candidate's own end board (the exact object handed
-to scoring), its myopic score, its rollout score and per-repeat outcomes,
-the CRN keys/seeds those repeats used, and which one was chosen. This is the
-distillation training signal for route a (regress V on the teacher's
-CONTINUOUS rollout scores instead of on 0/1 game outcomes); the driver's
-`--teacher-record-out` turns it into a gzipped JSONL stream. See
-`eval_versus_fullgame.py`'s "Wa addition" and
-`tools/check_teacher_record.py` for the file's self-check gates.
-
-exp12 W2 -- the LEARNED LEAF (`scoring="vgame"`, driver flag
-`--search-scoring vgame`, constructor kwarg `vgame_scorer`; both other modes
-are completely UNCHANGED and no run without the flag differs by a byte):
-
-Stage 1 is shared, byte for byte, with `myopic` and `rollout`: the same
-`n_candidates` chains are generated from the same wrapped recommender and
-deduped by the same end-board signature, so a vgame arm at width W scores
-exactly the candidate set a rollout arm at width W would have. What changes
-is the LEAF. Instead of one ksim oracle call per candidate (myopic) or a
-rest-of-game simulation per shortlisted candidate (rollout), every deduped
-end board goes through ONE batched forward of a learned value function
-(`tools/vgame_scorer.py::VGameLeafScorer.score_boards`) and the argmax of
-`(1-blend)*V + blend*myopic - pessimism*ensemble_std` wins.
-
-Two consequences worth stating because they are the point of the arm:
-
-- At `blend == 0` (the default, and the deployed A4 configuration) NOTHING
-  reads the stage-1 myopic score, so `_search` does not make the oracle
-  calls at all. That is where the speed the W2 decision rule measures comes
-  from, and it is why `search_greedy_score` and `search_diagnostics
-  ["myopic_scores"]` are all None on such a run rather than being quietly
-  filled with something the leaf did not use.
-- The turn-1 skip is KEPT even though a V leaf does not need an opponent
-  board, because W2 froze it that way for comparability with every other
-  arm on this ruler.
-
-The never-raise contract is strengthened rather than merely kept: a scorer
-failure of ANY kind degrades that one turn to the greedy chain with
-`search_used=False` and a `search_error` string, so a broken leaf costs
-strength and is counted, never a crashed game.
-
-The 4-dim race bypass the value function consumes needs pre-battle
-cumulative wins, which no board carries; `set_race_context(wins=...)` is how
-the driver supplies it once per turn, and a vgame search that was never told
-it refuses to score rather than guessing (see that method).
-
-exp13 AMENDMENT A1 -- THE HONEST FRAME (`turn_mode="segmented-honest"`,
-driver flag `--turn-mode`; `"whole-determinized"` is the default and is
-byte-for-byte everything above, so no run that does not ask for the new
-frame moves):
-
-Read `tools/honest_frame.py`'s module docstring first -- it owns the WHY
-(search on a seeded engine sees this turn's roll before deciding whether to
-roll) and the stream-S key. What changes HERE is stage 1 and the leaf, for
-the vgame path only:
-
-- The state this class is handed each segment is already an IMAGINED clone
-  (the driver overrides `meta.seed` with `S(engine_seed, turn,
-  segment_index, 0)`), so every engine walk this class does -- the wrapped
-  recommender's greedy decode, `_sample_candidate`'s sampled decode,
-  `_prefix_walk`'s replay -- runs on stream S. None of them can read the
-  play stream's position. That is A1 ruling 1, and it costs this class no
-  code: it inherits the separation from the state it is given.
-- Candidates are deduped and ranked by their DETERMINISTIC PREFIX
-  (`_prefix_walk`): every op up to and INCLUDING the first whose engine
-  resolution reports a `stochastic_reason`. That prefix is the unit the
-  driver actually commits before it stops and re-searches (A1 ruling 2), so
-  it is the unit that must be scored. Boundary detection is by
-  `stochastic_reason`, NEVER by an action-type whitelist, so a future engine
-  randomness source is covered the day it is added.
-- A prefix that ends in a stochastic action is scored as the MEAN of k
-  imagined completions (`--stochastic-samples`, default 3): resample that
-  one resolution under `S(..., sample_r=r)`, let the wrapped recommender
-  greedily finish the turn from the resampled board, and score the end board
-  with V. The sample keys carry `(decision, r)` and DELIBERATELY NOT the
-  candidate index, so siblings that reach the same chance node face the same
-  resampled outcome and only the move under evaluation differs (CRN). A
-  prefix that is deterministic all the way to END_TURN is scored exactly as
-  the determinized path scores it: one V forward on its end board.
-- Why the mean and not the argmax of one sample: with the seed no longer
-  shared between imagination and play, each candidate containing a ROLL
-  would otherwise draw its OWN shop, and a plain argmax would
-  systematically pick whichever candidate happened to roll well -- an
-  overestimate of the value of rolling. Re-drawing the SAME chain k times
-  is the opposite error (the original chain's post-roll buys turn illegal
-  on a different shop and get truncated, systematically UNDER-valuing the
-  roll), which is why the completion is regenerated greedily rather than
-  replayed.
-- Accepted residual biases, recorded rather than hidden (A1 ruling 4): a
-  greedy completion lower-bounds the value of information, because the real
-  agent re-searches after the roll instead of playing greedily; and argmax
-  over k-sample means carries a small optimizer bias even after CRN. W3's
-  depth-2 amendment upgrades the completion policy to a V-search over the
-  chance node and is the principled fix for the first.
-
-`scoring="myopic"`/`"rollout"` under the honest frame are REFUSED at
-construction, not silently run: their leaves would rank candidates on the
-single proposal-stream roll, which is exactly the pick-the-lucky-roll bias
-above. Expectation scoring is implemented for the V leaf only (A1 ruling 3).
-
-exp13 W0b' (the codex review of A1) tightened two things in that leaf, both
-in the same direction -- an imagined completion must be imagined the way A1
-says or not exist at all:
-
-- The k completions decode GREEDILY whatever the proposal decoder is doing.
-  `.deterministic` never controlled that (`BcRecommender.recommend` does not
-  read it back; since the W0(c) dual-decode probe it branches on
-  `.decode_mode`), so under `--decode-mode sample` the completions were
-  SAMPLED and their noise entered the k-mean. `_call_bc_recommend`'s
-  `force_ranked_decode` pins it, and only the completion path passes it:
-  sampled PROPOSALS stay a legal, deliberate arm.
-- A prefix whose completions ALL fail is DROPPED, and if it is the greedy
-  chain's own prefix (or nothing survives) the whole decision degrades to
-  greedy. It used to fall back to the proposal stream's board, which would
-  have scored that one prefix on a single lucky/unlucky roll while its
-  siblings were scored on k-means -- the exact bias A1 removes, reappearing
-  only under failure, where nothing would have noticed.
-
-exp13 AMENDMENT A2 -- THE STRUCTURAL CUT (`RESULTS_W0d.md` is the evidence):
-
-A1 cut the turn at every reported `stochastic_reason`. The W0 addendum
-measured what that bought: 5.304 segments per turn at 1.604 s each, with
-`ability_randomness` 44.6% of all segments -- and 96.8% of the resolutions
-that raised it were the event-order TIE-BREAK alone, 87.9% of which cannot
-resolve a single handler. Tie order came back board-invariant in 3,106 of
-3,106 exhaustive permutations. A2 therefore cuts on a STRUCTURAL criterion
-instead: only when the resolution wrote a field `legal_actions` reads (the
-engine reports it as `stochastic_structural`, see `engine.StepOutcome`).
-
-exp13 AMENDMENT A4 (2026-08-06) makes that criterion CAUSAL. A2.1 checked
-"randomness consumed" and "read-set written" separately over the whole step,
-so a deterministic read-set write became a cut whenever anything else in the
-same step happened to draw -- 1,218 of 30,015 searched segments across 697 of
-1,000 games on the post-merge re-pin (`RESULTS_W1a2.md` section 9). The engine
-now raises `stochastic_structural` only when the draw STEERED the write.
-Nothing in this module changed: it reads the same boolean.
-
-What changes in this module:
-
-- A2.2. `_prefix_walk` cuts on `stochastic_structural`, so a prefix MAY now
-  contain a non-structural stochastic resolution, resolved once on the
-  proposal stream. The deterministic-prefix invariant is RETIRED: the prefix
-  board is an ESTIMATE (it differs from the real committed board in which
-  pets got buffed), not a prediction. The remaining chain still cannot turn
-  illegal through that path, because `legal_actions` never reads stats, and
-  `_imagined_completion` is mechanically unaffected -- it overrides
-  `meta.seed` regardless and `pre_board` is still computed once for all k.
-- A2.3. k applies at STRUCTURAL chance nodes only. Non-structural randomness
-  inside a prefix resolves once, on the proposal stream, and is not averaged.
-  Accepted bias, recorded: a candidate containing a stat resolution is scored
-  on a single draw of it. All candidates in one decision share the proposal
-  stream so the comparison stays paired, but the draw is not shared op-for-op
-  between candidates whose chains differ; V's sensitivity to a few points of
-  attack/health on random friends is low relative to what re-applying whole
-  chains k times would cost.
-- A2.4. `_sample_candidate` stops its walk at the first op whose transition
-  reports a structural resolution, honest frame only. Decision-identical by
-  construction: `_prefix_walk` truncates at the same op and `_prefix_group_key`
-  is the prefix, so the winning candidate's committed ops are unchanged.
-  Candidate 0 comes from `_call_bc_recommend`, not this path, so the
-  search-failure fallback is untouched.
-- A2.5. Candidate 0 passes `force_ranked_decode=True` unconditionally, so
-  `--decode-mode sample` cannot take away the greedy anchor, the plain-BC
-  failure fallback (`_annotate_skip`) or comparability with plain-BC arms.
-  `.deterministic` never controlled the decoder (see `_call_bc_recommend`).
-"""
+The module also supports myopic battle scoring and rollout scoring. All search
+walks use copied states; deterministic seed namespaces preserve reproducibility."""
 
 from __future__ import annotations
 
@@ -421,12 +21,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-# exp13 W0b': `imagined_step`, not `step`. Every engine walk in this module
-# (`_apply_chain`, `_sample_candidate`, `_prefix_walk`, `_imagined_completion`)
-# scores or proposes a board that the DRIVER then re-applies against its own
-# real state; nothing here is ever committed. That makes these steps eligible
-# for the opt-in schema-validation skip; with the skip off (the default) this
-# is `api.step` exactly. See `api._SKIP_IMAGINED_VALIDATION`.
+
 from ..api import imagined_step as engine_step
 from ..oracles.sap_calc_battle_oracle import build_simulation_config
 from ..train.env import ACTION_CATALOG, TrainingEnv
@@ -440,28 +35,8 @@ from .bc_recommender import legal_mask
 # defaults) share one source of truth instead of a second copy of "12"/"16".
 DEFAULT_N_CANDIDATES = 12
 DEFAULT_KSIM = 16
-# exp16 W3: candidates per ANYTIME chunk, i.e. how much work a stop request
-# has to wait out. W0 derived 4 from its 65.3 ms-per-candidate PROPOSAL cost
-# (4 x 65.3 = 264 ms, inside exp16's 0.3 s stop budget), but it measured that
-# under k=1 and priced the proposal only. Two costs it could not have
-# included dominate under the honest frame:
-#   1. a chunk also pays k=3 imagined completions per DISTINCT prefix, so one
-#      candidate is ~110 ms end to end, not 65;
-#   2. a stop is not over when the chunk is: the turn's REMAINING segments
-#      still have to be greedy-finished before the AI has a turn to hand over
-#      (5-45 ms each, and a turn runs 5-11 segments), which is another
-#      50-250 ms and does not shrink with the chunk.
-# Measured (duel_smoke, one torch thread, stop-latency median in seconds):
-#   chunk   1      2      4      8
-#   6 turns 0.12   0.23   0.30   0.43
-#   24 games (276 turns): 0.152 / 0.163 at chunk 1, 0.209 / 0.235 at chunk 2
-# 4 and 8 miss the budget outright. 2 passes on the 24-game sample but landed
-# at 0.34 on one 36-turn sample, i.e. it makes the gate flaky rather than
-# safe. 1 measured 0.154-0.185 across three independent 3-game samples with
-# ~2x headroom, so that is the shipped default -- the exp16 PLAN's "if it
-# misses, tune the chunk size". It costs ~125 vs ~110 ms per candidate of
-# throughput, which only shows up when the AI has a long human turn to think
-# through; `--chunk-size` trades it back.
+
+
 DEFAULT_ANYTIME_CHUNK = 1
 # Two group scores within this of each other are a TIE for the anytime
 # path's argmax -- see `_search_anytime` for the batch-shape float noise
@@ -469,13 +44,11 @@ DEFAULT_ANYTIME_CHUNK = 1
 SCORE_TIE_EPS = 1e-6
 DEFAULT_SEED = 0
 
-# exp09 W1: `scoring=` choices + rollout-scoring defaults, exported for the
-# same reason as the constants above (the eval driver's argparse defaults
-# share this one source of truth).
+
 SCORING_MYOPIC = "myopic"
 SCORING_ROLLOUT = "rollout"
-# exp12 W2 (deployed in wave A4): the LEARNED leaf. See the module
-# docstring's "exp12 W2" section and `tools/vgame_scorer.py`.
+
+
 SCORING_VGAME = "vgame"
 SCORING_MODES: tuple[str, ...] = (SCORING_MYOPIC, SCORING_ROLLOUT, SCORING_VGAME)
 DEFAULT_SCORING = SCORING_MYOPIC
@@ -493,15 +66,7 @@ DEFAULT_SEARCH_GAME_RULES = SEARCH_GAME_RULES_VERSUS
 #: Mirrors `eval_versus_fullgame.DEFAULT_ARENA_RACE_CONVENTION`.
 DEFAULT_SEARCH_ARENA_RACE_CONVENTION = "trophies_mapped"
 
-#: MC rerank (ledger A2.6): after V has ranked the menu, take the top
-#: `mc_rerank_k` groups IN V ORDER and re-rank only those by `rollout_repeats`
-#: rollouts each. 0 disables it, which is every run before exp22.
-#:
-#: NOT `scoring="rollout"`, which makes a rollout the leaf for EVERY candidate.
-#: Ledger C7 records that as a different design (exp12 W2 section 9.3, 1482
-#: oracle calls per game against 11) and says in as many words that it "is not
-#: the same design" as this one, which is A2.6. The four refusals guarding
-#: `scoring="rollout"` therefore stay exactly as they are.
+
 DEFAULT_MC_RERANK_K = 0
 DEFAULT_ROLLOUT_KSIM = 16
 # Matches `eval_versus_fullgame.DEFAULT_MAX_TURN`; not imported from there
@@ -511,9 +76,7 @@ DEFAULT_ROLLOUT_KSIM = 16
 # a caller/test that omits it.
 DEFAULT_ROLLOUT_MAX_TURN = 30
 
-# exp10 W2: `rollout_opponent_mode=` choices, exported for the same reason
-# as the constants above (the eval driver's argparse default/choices share
-# this one source of truth). See module docstring's "exp10 W2" section.
+
 ROLLOUT_OPPONENT_TRUE = "true"
 ROLLOUT_OPPONENT_POOL_RANDOM = "pool_random"
 ROLLOUT_OPPONENT_RETRIEVAL = "retrieval"
@@ -524,10 +87,7 @@ ROLLOUT_OPPONENT_MODES: tuple[str, ...] = (
 )
 DEFAULT_ROLLOUT_OPPONENT_MODE = ROLLOUT_OPPONENT_TRUE
 
-# exp12 route a (wave A0): common-random-numbers keying for the rollout leaf
-# + the teacher record, both OFF by default so no existing run (including the
-# live W2c width arms) changes by a byte. See the module docstring's two
-# "exp12 route a, wave A0" sections.
+
 DEFAULT_ROLLOUT_CRN = False
 DEFAULT_CAPTURE_TEACHER_RECORD = False
 # Salts, exported so the checker tool can re-derive a recorded key instead of
@@ -541,27 +101,12 @@ CRN_ENGINE_SALT = "exp12_wa_crn_engine"
 CRN_ENGINE_SEED_BITS = 63
 TEACHER_RECORD_SCHEMA = "exp12-teacher-record/v1"
 
-# exp13 (2026-08-09): `_sample_candidate` draws again when a walk committed
-# NOTHING because a DRAW was rejected. A walk that had nothing to draw
-# (`no_legal_actions`, `legal_mask_failed`) is not retried -- it would draw
-# the same nothing -- and neither is a walk that committed at least one op,
-# which is already a candidate. 8 is a backstop, not a tuning knob: the
-# measured rate of an empty walk is ~1 candidate in 5,000 (176 of 1,044,576
-# on W1b, 74 of 386,280 on the W1c pilot), so the second attempt clears it
-# on every board except one whose legal mass is nearly all cycles.
+
 RESAMPLABLE_EMPTY_STOPS: frozenset[str] = frozenset(
     {"sampled_cycle", "sampled_action_illegal", "sampled_action_error"}
 )
-#: Every way `_sample_walk` can stop WITHOUT the decoder choosing to end the
-#: turn. `end_turn_chosen` is the only one that means it finished, so this is
-#: its complement, written out rather than inferred -- a completion is rescued
-#: on a NAMED failure, never on "the reason is not the one string I know".
-#: Getting that polarity wrong dropped 6 of 10 boards in exp13's honest-frame
-#: fixture, whose duck-typed proposer spells its success `stub_end_turn`.
-#:
-#: `test_exp16_completion_tail` asserts this set still covers every literal
-#: `_sample_walk` can emit, so a new stop reason fails loudly instead of
-#: quietly counting as finished.
+
+
 UNFINISHED_WALK_STOPS: frozenset[str] = frozenset(
     {
         "cap_reached",
@@ -575,58 +120,18 @@ UNFINISHED_WALK_STOPS: frozenset[str] = frozenset(
     }
 )
 MAX_SAMPLE_ATTEMPTS = 8
-#: exp16 W11b safety valve on the `resample-clock` extra-sample loop. The
-#: segment clock is the normal stop; this only bounds the pathological case.
+
+
 MAX_EXTRA_SAMPLE_LEVELS = 4096
 
 
-#: exp22 W3. What fills in the rest of the turn behind a chance node while the
-#: search is still RANKING. `bc_greedy` is every run before 2026-08-19: one
-#: greedy BC decode, which lower-bounds the value of information because the
-#: real agent re-searches after the roll instead of playing greedily (this
-#: module's own "Accepted residual biases" note). `v_search` is that note's
-#: named fix: propose several completions and let V pick.
-#: exp16 W0 (2026-08-20). What a SAMPLED completion does when its walk would
-#: otherwise give up before the turn is over. Measured at the real call site
-#: (525 sampled completions over 25 walks that stop at a chance node): 45.0%
-#: reached `end_turn_chosen`, 38.7% stopped on `sampled_cycle`, 16.4% on
-#: `structural_boundary`. So 55% never finished, the half-chain is NOT dropped
-#: (`ok = bool(chain)`), and `_completion_agg`'s `max` then compares one
-#: finished board against up to `completion_width - 1` unfinished ones while
-#: the V leaf is trained on end-of-turn boards.
-#:
-#: `stop` is that behaviour. It was the default until 2026-08-21 and is kept as
-#: a named value so a run can reproduce anything measured before then.
-#:
-#: THE DEFAULT IS NOW `resample`. Ruihan ruled the unfinished completion a
-#: defect (`16-play-vs-ai/PLAN_W11.md` appendix W0-Z): a completion that quits
-#: with gold unspent, a roll unused, or the turn unended describes a position
-#: that cannot occur in a real game, so scoring it is scoring a fiction, and
-#: that is true whether or not V notices. The measurements that had argued for
-#: leaving it alone were all proxies for "did V's number move", and W0-Z voids
-#: every one of them as an input to this decision.
-#:
-#: `resample` beat `finish_greedy` on the two axes the ruling leaves open,
-#: measured paired in one window over 90 (walk, sample) units at inner width 8
-#: (`16-play-vs-ai/probe_completion_pick.py`, raw in `w0_pick.json`):
-#:   completeness  both reach END_TURN on 100% of alternatives, against 51.3%
-#:                 for `stop`
-#:   diversity     6.27 distinct boards of 8 and 81.0% differing from index 0,
-#:                 against `finish_greedy`'s 5.58 and 74.8%
-#:   cost          a tie: paired ratio 0.970x with an IQR of [0.877, 1.028],
-#:                 which contains 1.0. The previously published 64% vs 78% gap
-#:                 did NOT replicate under a paired estimator.
-#: Both cost about 1.4x of `stop` per completion in that window, and that part
-#: is real: under a fixed clock it buys fewer segments.
 COMPLETION_TAIL_STOP = "stop"
 #: Let the walk stop, then hand the tail to the greedy decoder -- what index 0
 #: already does. Closes comparability; costs diversity, because every
 #: alternative then ends the same way.
 COMPLETION_TAIL_GREEDY = "finish_greedy"
-#: Do not let it stop: no structural break inside a completion (that break's
-#: own justification, "everything past it is provably discarded", is true of an
-#: outer CANDIDATE and false here), and on a would-be revisit mask that action
-#: and draw again from what is left instead of giving up. Ruihan's, 2026-08-20.
+
+
 COMPLETION_TAIL_RESAMPLE = "resample"
 COMPLETION_TAILS = (
     COMPLETION_TAIL_STOP,
@@ -638,20 +143,7 @@ COMPLETION_BC_GREEDY = "bc_greedy"
 COMPLETION_V_SEARCH = "v_search"
 COMPLETION_POLICIES = (COMPLETION_BC_GREEDY, COMPLETION_V_SEARCH)
 
-#: How one imagined sample's inner completions collapse to one number.
-#: `max` is the deepening, and it is also the SEMANTICALLY right aggregation:
-#: the chance outcome has already been averaged over one layer out, by the
-#: `stochastic_samples` loop, so a max here is not optimism about the roll --
-#: it is the agent doing what it really does, picking the best continuation it
-#: can find once the shop is known. `mean` is the deliberately-degraded
-#: CONTROL: identical boards, identical compute, but the extra options are not
-#: allowed to be chosen, so the arm pays for depth and then throws it away.
-#:
-#: RETRACTED 2026-08-19: an earlier version of this note called `mean` the
-#: control that separates "the search found a better continuation" from "a max
-#: over more estimates inflates them". It does not separate anything, because
-#: the inflation it named would have to enter through the chance node, and the
-#: chance node is handled by the outer mean.
+
 COMPLETION_AGG_MAX = "max"
 COMPLETION_AGG_MEAN = "mean"
 COMPLETION_AGGREGATES = (COMPLETION_AGG_MAX, COMPLETION_AGG_MEAN)
@@ -660,17 +152,8 @@ COMPLETION_AGGREGATES = (COMPLETION_AGG_MAX, COMPLETION_AGG_MEAN)
 def completion_agg(values: list[float], aggregate: str = COMPLETION_AGG_MAX) -> float:
     """One imagined sample's inner completions -> one number.
 
-    The ONE definition of the inner aggregation. Both honest assembly sites
-    (`_search_vgame_honest`, `_search_anytime`) reach it through
-    `SearchRecommender._completion_agg`, and the Bellman labeller imports it
-    directly (`w1_bellman_targets._score_group`), so the policy the label
-    values and the policy the search plays cannot disagree about what a group
-    score means. See `COMPLETION_AGG_MAX` for why `max` is the semantics and
-    `mean` the degraded control.
-
     A single value returns unchanged, which is what makes `bc_greedy` (inner
-    width 1) bit-identical to every run before deepening existed.
-    """
+    width 1) bit-identical to every run before deepening existed."""
     if not values:
         return 0.0
     if len(values) == 1:
@@ -698,15 +181,7 @@ def _read_last_opponent_team(state: dict[str, Any]) -> list[dict[str, Any]] | No
 
 
 def _read_current_opponent_pid(state: dict[str, Any]) -> str | None:
-    """`state["meta"]["versus"]["current_opponent_participation_id"]`, or
-    None if absent/wrong-typed/empty. This is the pid `resolve_end_turn_
-    with_sampled_battle` will look up to resolve THIS turn's battle (see
-    `end_turn.py`'s `forced_pid_source == "versus_chain"` branch) -- exp10
-    W2's `"true"`-vs-substituted-mode correctness proof reads it both
-    before a rollout continuation starts (the true followed pid to
-    exclude/compare against) and after each turn resolves (mirrors
-    `_read_last_opponent_team`'s defensive-read style). Never raises.
-    """
+    """Read current opponent pid."""
     meta = state.get("meta")
     if not isinstance(meta, dict):
         return None
@@ -768,16 +243,15 @@ def _annotate_skip(greedy_result: dict[str, Any]) -> dict[str, Any]:
         {
             "search_used": False,
             "search_n_candidates": 0,
-            # exp12 W2c width telemetry: schema parity only -- nothing was
-            # generated or deduped on a skipped turn.
+
+
             "search_n_generated": 0,
             "search_n_dedup": 0,
             "search_scores": [],
             "search_chosen_index": 0,
             "search_greedy_score": None,
-            # exp09 W2: schema parity with the searched-and-scored result
-            # shape (always present, always None here -- there was nothing
-            # to capture chains FOR).
+
+
             "search_candidate_chains": None,
         }
     )
@@ -786,18 +260,6 @@ def _annotate_skip(greedy_result: dict[str, Any]) -> dict[str, Any]:
 
 def _searched_verdict(chosen_chain: list[dict[str, Any]]) -> dict[str, Any]:
     """The four keys a COMPLETED prefix search owns on its own result.
-
-    Both honest assembly sites (`_search_vgame_honest`, `_search_anytime`)
-    build their result as `dict(winner)` and then overwrite what the SEARCH
-    decided. `winner` is the raw candidate that was FIRST to reach the winning
-    prefix group -- a bookkeeping pointer into `candidates`, not a verdict on
-    this decision -- so `ok` and `error` have to be overwritten with the rest.
-    They were not. A winner whose own decode committed nothing carries
-    `ok=False` (`_sample_candidate`), `run_segmented_turn` reads exactly that
-    field, and a search that had deduped, scored and ranked every prefix and
-    picked one therefore ended the game as an agent terminal failure instead of
-    playing its own choice. All 82 `decode_failed` games in exp13's 8,548
-    honest games on disk are that, and nothing else (`census_empty_chain.py`).
 
     An empty winning prefix is a CHOICE, not a failure. Its dedup key is
     `("det", signature(start board))` -- the same key an END_TURN-first
@@ -813,8 +275,7 @@ def _searched_verdict(chosen_chain: list[dict[str, Any]]) -> dict[str, Any]:
     `diagnostics` stays the winning candidate's on purpose: it is decode
     telemetry about that chain, and `run_segmented_turn`'s stop-reason sink --
     hence every `stop_reasons` histogram already on disk -- reads `stop_reason`
-    off it.
-    """
+    off it."""
     chain = chosen_chain if chosen_chain else [{"type": "END_TURN"}]
     return {
         "ok": True,
@@ -825,10 +286,7 @@ def _searched_verdict(chosen_chain: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 class SearchRecommender:
-    """Best-of-N search wrapper over a `BcRecommender` (or API-compatible
-    stand-in) for exp09 W6a. See the module docstring for the full
-    algorithm and the candidate-diversity design note.
-    """
+    """Searchrecommender."""
 
     def __init__(
         self,
@@ -864,8 +322,8 @@ class SearchRecommender:
         # its own, only ever calls into the one it was handed (see module
         # docstring's "candidate diversity" section for exactly how).
         self.bc = bc_recommender
-        # The frame the rollout continuation resolves under. The `versus`
-        # default keeps every pre-exp22 run byte-identical.
+
+
         if game_rules not in SEARCH_GAME_RULES:
             raise ValueError(
                 f"search_recommender_bad_game_rules:{game_rules!r}:"
@@ -895,17 +353,15 @@ class SearchRecommender:
         # `_rng_for_candidate`.
         self._recommend_call_count = 0
 
-        # exp09 W1 rollout scoring (module docstring's ROLLOUT section).
+
         if scoring not in SCORING_MODES:
             raise ValueError(f"search_recommender_bad_scoring:{scoring!r}:expected_one_of={SCORING_MODES}")
         self.scoring = str(scoring)
         self.rollout_shortlist = int(rollout_shortlist)
         self.rollout_repeats = int(rollout_repeats)
         self.rollout_ksim = int(rollout_ksim)
-        # exp10 W2: see module docstring's "exp10 W2" section. Validated
-        # unconditionally (not just when scoring="rollout") so a bad value
-        # is caught at construction time regardless of which scoring mode
-        # a caller also passed.
+
+
         if rollout_opponent_mode not in ROLLOUT_OPPONENT_MODES:
             raise ValueError(
                 f"search_recommender_bad_rollout_opponent_mode:{rollout_opponent_mode!r}:"
@@ -922,10 +378,10 @@ class SearchRecommender:
             # for this mode, not a blanket constructor requirement.
             raise ValueError("search_recommender_scoring_rollout_requires_opp_source")
         self.opp_source = opp_source
-        # exp09 W2: see module docstring's "capture_candidate_chains" section.
+
         self.capture_candidate_chains = bool(capture_candidate_chains)
-        # exp12 route a (wave A0): see the module docstring's two
-        # "exp12 route a, wave A0" sections.
+
+
         self.rollout_crn = bool(rollout_crn)
         self.capture_teacher_record = bool(capture_teacher_record)
         # Set by `set_decision_context` (the driver, once per game) and by
@@ -933,16 +389,14 @@ class SearchRecommender:
         # that never sets them -- see `_crn_decision_id`.
         self._crn_game_index: int | None = None
         self._decision_turn: int | None = None
-        # exp12 W2 (wave A4): the learned leaf, and the one race scalar no
-        # board carries. See the module docstring's "exp12 W2" section.
+
+
         self.vgame_scorer = vgame_scorer
         if self.scoring == SCORING_VGAME and vgame_scorer is None:
             raise ValueError("search_recommender_scoring_vgame_requires_vgame_scorer")
         self._race_wins: int | None = None
 
-        # exp13 A1: the honest frame. See the module docstring's own A1
-        # section. Default `whole-determinized` == every line above,
-        # unchanged, so nothing that does not ask for the new frame moves.
+
         self.turn_mode = honest_frame.normalize_turn_mode(turn_mode)
         self.honest = honest_frame.is_honest(self.turn_mode)
         self.stochastic_samples = int(stochastic_samples)
@@ -951,12 +405,8 @@ class SearchRecommender:
                 f"search_recommender_bad_stochastic_samples:{stochastic_samples!r}:must_be_at_least_1"
             )
         if self.mc_rerank_k and self.scoring != SCORING_VGAME:
-            # The rerank re-orders a ranking V produced. Without a V ranking
-            # there is no "top k in V order" to re-rank, and taking the
-            # shortlist off a myopic score is the defect `DECISIONS.md:316`
-            # named on 2026-08-25: the implemented rollout operator picks its
-            # shortlist by stage-1 myopic score while the priced `Pick_MC(k,m)`
-            # picks by V order, "so W3 is a wave of implementation".
+
+
             raise ValueError(
                 f"search_recommender_mc_rerank_requires_vgame_scoring:{self.scoring!r}:"
                 f"mc_rerank_k={self.mc_rerank_k} needs scoring={SCORING_VGAME!r} so the "
@@ -969,12 +419,12 @@ class SearchRecommender:
             # scoring (A1 ruling 3) is implemented for the V leaf only.
             raise ValueError(
                 f"search_recommender_honest_frame_requires_vgame_scoring:{self.scoring!r}:"
-                f"expectation scoring at the root (exp13 PLAN Amendment A1 section 3) is "
+                f"expectation scoring at the root is "
                 f"implemented for scoring={SCORING_VGAME!r} only; a {self.scoring!r} leaf "
                 f"under turn_mode={honest_frame.TURN_MODE_SEGMENTED_HONEST!r} would rank candidates on a "
                 f"single imagined roll and systematically prefer the lucky one"
             )
-        # exp22 W3: the completion policy behind a chance node.
+
         if completion_policy not in COMPLETION_POLICIES:
             raise ValueError(
                 f"search_recommender_bad_completion_policy:{completion_policy!r}:"
@@ -999,12 +449,8 @@ class SearchRecommender:
                 f"search_recommender_bad_completion_width:{completion_width!r}:must_be_at_least_1"
             )
         if self.completion_policy == COMPLETION_V_SEARCH:
-            # A "deepening" arm at width 1 proposes exactly the greedy
-            # completion and nothing else, i.e. it is the old arm wearing the
-            # new name. exp22 already shipped one confident null about an
-            # intervention that had barely happened (b1's 2.55% extractor
-            # travel against exp12's 15.67%); refusing at construction is the
-            # cheap end of that lesson.
+
+
             if self.completion_width < 2:
                 raise ValueError(
                     f"search_recommender_v_search_needs_width_ge_2:{self.completion_width}:"
@@ -1040,18 +486,11 @@ class SearchRecommender:
         # policy are still available, before V can score it.
         self._completion_terminal_boards = 0
         self._completion_unfinished_boards = 0
-        # exp16 W11b. How many chance nodes a completion walked THROUGH, which
-        # `MEASURED.md`'s draft row for this layer says nothing records: "there
-        # is neither a tunable nor any telemetry saying how many chance nodes a
-        # chain contains". Counted for every tail, so the three are comparable:
-        # under `stop`/`finish_greedy` the walk breaks at the first one, under
-        # `resample` it keeps going, and the difference is the point.
+
+
         self._completion_second_chance = 0
-        #: Completions whose sampled walk gave up and were finished greedily so
-        #: that no half-played board is ever scored. Reported on the search
-        #: result rather than archived per segment: the measured incidence is
-        #: zero, and a schema field for an event nothing produces is the shape
-        #: this wave already declined once.
+
+
         self._completion_rescued = 0
 
         # Set by `set_imagination_context` (the driver, once per SEGMENT).
@@ -1064,23 +503,9 @@ class SearchRecommender:
         self._state_seed: int = 0
 
     def set_decision_context(self, *, game_index: int | None, turn: int | None = None) -> None:
-        """exp12 route a (wave A0): tell this recommender which GAME the
-        decisions it is about to make belong to, so CRN keys and teacher
-        records are a pure function of `(seed, game_index, turn,
-        repeat_index)` rather than of how many `recommend()` calls this
-        process happened to make first (which sharding breaks).
-
-        Called once per game by `eval_versus_fullgame.py::play_one_game`,
+        """Called once per game by `eval_versus_fullgame.py::play_one_game`,
         duck-typed, so a `BcRecommender` or any other recommender that does
-        not define it is simply not called. Never raises.
-
-        `turn` (exp12 route a, track b) is optional and exists for callers
-        that score a RECORDED decision directly through
-        `_rollout_score_candidate` instead of playing a game -- the offline
-        re-scorer `tools/rescore_agreement_teacher.py` is the only one. A
-        live `recommend()` call always overwrites it from the state it was
-        handed, so this can never shadow the driver's own turn.
-        """
+        not define it is simply not called. Never raises."""
         self._crn_game_index = None if game_index is None else int(game_index)
         if turn is not None:
             self._decision_turn = int(turn)
@@ -1124,26 +549,7 @@ class SearchRecommender:
     def _crn_engine_seed(self, repeat_index: int) -> int:
         """The engine (shop) seed every sibling candidate's repeat-`r`
         continuation is started from under CRN. sha256 rather than
-        `hash()` so it is stable across processes and python runs.
-
-        Width (exp12 Wa, codex review finding 2): `CRN_ENGINE_SEED_BITS` = 63,
-        NOT the 31 this first shipped with. 31 bits is the range the engine
-        REGENERATES into (`engine._reseed_meta` draws
-        `randrange(0, 2**31)`, the .NET-heritage `int.MaxValue` range), but
-        nothing on the accept side is bound by it: `schemas/state_v1.json`
-        types `meta.seed` as an unbounded integer, the rust mirror
-        (`sap_engine_core::Meta`) types it `Option<u64>`, the only consumer
-        is `engine._rng_from_state`'s `random.Random(seed)` which takes any
-        int, and `meta` never crosses into the JS battle oracle (see
-        `build_simulation_config`, which sends pets and packs only), so no
-        float-precision boundary applies either. At A1 volume the narrow
-        range mattered: ~320k (decision, repeat) keys drawn from 2**31 gives
-        ~24 EXPECTED birthday collisions, i.e. ~24 pairs of decisions
-        silently sharing a shop stream; from 2**63 the same draw expects
-        5.5e-9 of one. `--rollout-crn` is what makes this seed authoritative,
-        so a collision there is a coupled pair of teacher labels, not noise
-        that averages out.
-        """
+        `hash()` so it is stable across processes and python runs."""
         key = f"{CRN_ENGINE_SALT}:{self.seed}:{self._crn_decision_id()}:{repeat_index}"
         digest = hashlib.sha256(key.encode("utf-8")).digest()
         return int.from_bytes(digest[:8], "big") >> (64 - CRN_ENGINE_SEED_BITS)
@@ -1199,22 +605,7 @@ class SearchRecommender:
         (matches the spec this class was built from: candidate 0 always
         uses `deterministic=True`; `_generate_candidate`'s fallback path
         uses `deterministic=False`). A no-op toggle if `self.bc` has no
-        `deterministic` attribute at all (defensive only).
-
-        `force_ranked_decode` (exp13 W0b', codex finding 2) additionally pins
-        `.decode_mode` to `"ranked"` for the duration of the call. It exists
-        because `.deterministic` DOES NOT CONTROL the real decoder: as this
-        module's docstring already records, `BcRecommender.recommend` never
-        reads that attribute back, and since the W0(c) dual-decode probe it
-        branches on `self.decode_mode` instead. So under
-        `--decode-mode sample` the toggle above is inert and every walk this
-        class asks for comes back SAMPLED -- which is the arm's own choice for
-        PROPOSALS (they stay sampled, deliberately), but is a frame violation
-        for the k imagined COMPLETIONS of a stochastic prefix: A1 section 3
-        defines them as greedy, and sampling them injects decoder noise into
-        the k-mean that expectation scoring is supposed to average the ENGINE's
-        randomness over. Only `_imagined_completion` passes it.
-        """
+        `deterministic` attribute at all (defensive only)."""
         has_det = hasattr(self.bc, "deterministic")
         original_det = self.bc.deterministic if has_det else None
         has_decode = force_ranked_decode and hasattr(self.bc, "decode_mode")
@@ -1241,14 +632,6 @@ class SearchRecommender:
     ) -> dict[str, Any]:
         """One sampled candidate: `_sample_walk`, drawn again while it is empty.
 
-        A walk that rejects its very first draw has committed nothing, and an
-        empty chain is not a candidate -- it is a candidate that was not
-        produced. Emitting it anyway put `ok=False` into the search's candidate
-        list, where `_prefix_walk` reduced it to an empty committable prefix
-        that then competed on merit and, when it won, handed the driver a
-        result that said both "here is my choice" and "I failed" (exp13 W1c
-        game 647, and the 82 `decode_failed` games in the data on disk).
-
         So draw again. Each attempt is an independent walk from the SAME masked
         distribution, so what changes is how often this class of candidate
         occurs, not the distribution a returned chain is drawn from: the
@@ -1264,8 +647,7 @@ class SearchRecommender:
         that this method no longer produces one.
 
         `diagnostics.sample_attempts` is how many walks this candidate cost, so
-        a resample can never be invisible.
-        """
+        a resample can never be invisible."""
         attempts = 0
         while True:
             attempts += 1
@@ -1322,32 +704,12 @@ class SearchRecommender:
         stopping on the FIRST draw leaves nothing, which is what
         `_sample_candidate` draws again for.
 
-        A2.4: under the HONEST frame the walk also stops at the first op whose
-        transition reports a STRUCTURAL resolution, because everything past it
-        is provably discarded -- `_prefix_walk` truncates the chain at exactly
-        that op and `_prefix_group_key` keys on the prefix, so the tail never
-        reaches a score, a dedup key or the driver. The measured discarded tail
-        was a median of 0 ops (`RESULTS_W0d.md` part 1), and BC decode plus
-        engine replay is 97% of wall clock. Off under the determinized frame,
-        where the whole-turn chain IS the scored unit.
-
-        `completion_mode` (exp16 W0, 2026-08-20) is for a walk that is filling
-        in the rest of a turn behind a chance node rather than proposing a
-        committable prefix. BOTH early stops above are wrong there and right
-        here, which is why it is a parameter rather than a change:
-
         - the structural break's own justification is "everything past it is
           provably discarded", true of an outer candidate and FALSE of a
           completion, whose tail is exactly the board that gets scored;
         - the cycle stop gives up because a single draw has no well-defined
           "next best". A completion can simply mask that action and draw again
-          from what is left, which keeps it a sample instead of a stump.
-
-        With `completion_mode=False` nothing is banned, `pool is legal_idx`,
-        and the draw is the identical `rng.choice` on the identical array, so
-        the proposal path is byte-identical. `test_exp16_completion_tail`
-        pins that.
-        """
+          from what is left, which keeps it a sample instead of a stump."""
         work = copy.deepcopy(state)
         set_training_rolls_this_turn(work, 0)  # same observation-parity reset BcRecommender.recommend uses
         chain: list[dict[str, Any]] = []
@@ -1426,12 +788,8 @@ class SearchRecommender:
             chain.append(copy.deepcopy(action))
             work = next_state
             visited.add(sig)
-            # W11b instrument, and it sits OUTSIDE the break below on purpose
-            # so the three tails stay comparable: `stop` and `finish_greedy`
-            # break here and so count at most one per walk, `resample` walks on
-            # and counts each. Keyed on `for_completion` rather than
-            # `completion_mode` because the latter is the BEHAVIOUR switch and
-            # is only on under `resample`; this has to fire for all three.
+
+
             if for_completion and trans.get("stochastic_structural"):
                 self._completion_second_chance += 1
             # The structural break belongs to the PROPOSAL frame only: see the
@@ -1468,14 +826,7 @@ class SearchRecommender:
         return self._call_bc_recommend(state, deterministic=False)
 
     def _score_end_board(self, end_board: dict[str, Any], opponent_team: list[dict[str, Any]]) -> float:
-        """One oracle call, `simulation_count=self.ksim`, scored as
-        `(playerWins - opponentWins) / ksim` (PLAN.md's k-sim
-        expected-outcome formula; see `train/gym_env.py::
-        ksim_lives_outcome` for the training-time sibling of this same
-        math). Raises on any failure -- never returns a sentinel -- so the
-        caller (`_search`'s per-candidate scoring loop) can `except` it and
-        exclude just that one candidate rather than the whole search.
-        """
+        """Score end board."""
         config = build_simulation_config(
             end_board, opponent_team=copy.deepcopy(opponent_team), simulation_count=self.ksim
         )
@@ -1505,11 +856,7 @@ class SearchRecommender:
         for i in range(1, self.n_candidates):
             candidates.append(self._generate_candidate(state, i))
 
-        # exp13 A1: under the honest frame the unit that gets scored is the
-        # deterministic PREFIX, not the whole-turn end board, so stage 1's
-        # end-board dedup below is replaced wholesale -- see
-        # `_search_vgame_honest`. Only reachable with `scoring="vgame"` (the
-        # constructor refuses every other leaf under this mode).
+
         if self.honest:
             return self._search_vgame_honest(
                 state=state,
@@ -1532,11 +879,7 @@ class SearchRecommender:
                 groups[sig] = {"end_board": end_board, "first_index": i, "score": None, "scored": False}
                 order.append(sig)
 
-        # exp12 W2: the LEARNED leaf does not read the myopic score at all
-        # unless `blend != 0`, and the stage-1 oracle call is precisely the
-        # cost the W2 rule's speed criterion is about, so it is SKIPPED when
-        # nothing will read it. Every other mode (and a blended vgame leaf)
-        # takes the unchanged path below, byte for byte.
+
         if self.scoring == SCORING_VGAME and not self._vgame_needs_myopic():
             for sig in order:
                 groups[sig]["score"] = None
@@ -1566,9 +909,7 @@ class SearchRecommender:
         # None both when the greedy candidate's own oracle call failed and
         # (vgame, blend 0) when no oracle call was made at all.
 
-        # exp09 W2: see module docstring's "capture_candidate_chains" section
-        # -- None (the default) unless a caller opted in; skipped entirely
-        # otherwise so no existing (W1/W6a) caller pays for or changes this.
+
         candidate_chains: list[list[dict[str, Any]]] | None = None
         if self.capture_candidate_chains or self.capture_teacher_record:
             candidate_chains = [
@@ -1576,8 +917,7 @@ class SearchRecommender:
                 for sig in scored_sigs
             ]
 
-        # exp12 W2: `scoring="vgame"` replaces the leaf -- see
-        # `_search_vgame`'s docstring.
+
         if self.scoring == SCORING_VGAME:
             return self._search_vgame(
                 state=state,
@@ -1590,9 +930,7 @@ class SearchRecommender:
                 n_dedup=len(order),
             )
 
-        # exp09 W1: `scoring="rollout"` takes over from here -- see
-        # `_search_rollout`'s docstring. `scoring="myopic"` (default) falls
-        # straight through to the UNCHANGED code below.
+
         if self.scoring == SCORING_ROLLOUT:
             return self._search_rollout(
                 candidates=candidates,
@@ -1612,41 +950,24 @@ class SearchRecommender:
             {
                 "search_used": True,
                 "search_n_candidates": len(scored_sigs),
-                # exp12 W2c (width curve): how many chains were GENERATED at
-                # this turn's requested width vs how many DISTINCT end
-                # boards they collapsed to. `search_n_candidates` above is
-                # the deduped set that actually got scored, so it also drops
-                # any group whose oracle call failed; `search_n_dedup` is
-                # the proposer's real diversity, which is what a width arm
-                # is buying (see the module docstring's "candidate
-                # diversity" note -- a width that dedups away is fake).
+
+
                 "search_n_generated": int(self.n_candidates),
                 "search_n_dedup": int(len(order)),
                 "search_scores": [float(groups[sig]["score"]) for sig in scored_sigs],
                 "search_chosen_index": scored_sigs.index(best_sig),
                 "search_greedy_score": (float(greedy_score) if greedy_score is not None else None),
-                # exp09 W2: None unless `capture_candidate_chains=True`.
+
                 "search_candidate_chains": candidate_chains,
             }
         )
         return result
 
     def set_race_context(self, *, wins: int | None) -> None:
-        """exp12 W2 (wave A4): the one race scalar no board carries.
-
-        `turn`, `lives` and `opponent_lives` are all readable off the state
-        search was handed, but PRE-BATTLE CUMULATIVE WINS (Vic semantics,
-        RESULTS_W1 finding 2) lives only in the driver's own `wins_so_far`
-        counter, and the V bypass block needs it (RESULTS_W1 finding 9's
-        serve contract). `eval_versus_fullgame.py::play_out_game` calls this
-        once per turn before `bc.recommend`, duck-typed, so a recommender
-        that does not define it is simply never called.
-
-        A vgame search that was never told `wins` REFUSES to score (the
+        """A vgame search that was never told `wins` REFUSES to score (the
         search is skipped and `search_error` says why) rather than guessing
         0, because a wrong bypass value is a silent train/serve skew and a
-        skipped search is a loud one. Never raises.
-        """
+        skipped search is a loud one. Never raises."""
         self._race_wins = None if wins is None else int(wins)
 
     def _vgame_needs_myopic(self) -> bool:
@@ -1676,17 +997,11 @@ class SearchRecommender:
             "wins": int(self._race_wins),
         }
 
-    # ------------------------------------------------------------------
-    # exp13 Amendment A1: the honest frame (stream separation, prefix dedup,
-    # expectation scoring). See the module docstring's own A1 section and
-    # `tools/honest_frame.py`.
-    # ------------------------------------------------------------------
+
     def set_imagination_context(
         self, *, engine_seed: int | None, segment_index: int = 0
     ) -> None:
-        """exp13 A1 (ruling 1): which IMAGINATION STREAM this segment plans on.
-
-        `engine_seed` is the GAME's own engine seed (`play_one_game`'s
+        """`engine_seed` is the GAME's own engine seed (`play_one_game`'s
         `engine_seed_rng` draw, a pure function of `(--seed, game_index)`),
         never the state's chained `meta.seed` -- keying on the latter would
         key on the play stream's position, which is the coupling A1 removes.
@@ -1696,24 +1011,12 @@ class SearchRecommender:
 
         Called once per SEGMENT by `eval_versus_fullgame.py::play_out_game`,
         duck-typed exactly like `set_decision_context`/`set_race_context`, so
-        a plain `BcRecommender` is simply never called. Never raises.
-        """
+        a plain `BcRecommender` is simply never called. Never raises."""
         self._imagination_engine_seed = None if engine_seed is None else int(engine_seed)
         self._imagination_segment_index = int(segment_index)
 
     def _imagination_seed(self, sample_r: int) -> int:
-        """`S(engine_seed, turn, segment_index, sample_r)` for this decision.
-
-        With the driver's context set (the only configuration exp13 runs),
-        this is a pure function of `(--seed, game_index, turn, segment,
-        sample_r)`. WITHOUT it -- a unit test, or a caller like exp16's duel
-        loop that has not wired the hook yet -- it falls back to the seed of
-        the state it was handed, which the driver has ALREADY overridden to
-        `S(..., 0)`, so the derived sample streams are still a pure function
-        of the same tuple and still independent of the play stream. The
-        fallback is reported (`_imagination_key_source`) rather than assumed,
-        so a report cannot claim the honest frame while running off it.
-        """
+        """`S(engine_seed, turn, segment_index, sample_r)` for this decision."""
         if self._imagination_engine_seed is not None:
             engine_seed = int(self._imagination_engine_seed)
             segment_index = int(self._imagination_segment_index)
@@ -1882,11 +1185,8 @@ class SearchRecommender:
         self._completion_terminal_boards = 0
         self._completion_unfinished_boards = 0
         self._completion_second_chance = 0
-        #: Completions whose sampled walk gave up and were finished greedily so
-        #: that no half-played board is ever scored. Reported on the search
-        #: result rather than archived per segment: the measured incidence is
-        #: zero, and a schema field for an event nothing produces is the shape
-        #: this wave already declined once.
+
+
         self._completion_rescued = 0
 
     def _completion_instruments(self) -> dict[str, Any]:
@@ -1919,11 +1219,6 @@ class SearchRecommender:
     def _imagined_completions(self, walk: dict[str, Any], sample_r: int) -> list[dict[str, Any]]:
         """The boards one imagined sample contributes.
 
-        Under `bc_greedy` (every run before 2026-08-19) that is exactly one
-        board and this is the old `_imagined_completion` unchanged. Under
-        `v_search` it is up to `completion_width` boards, of which index 0 is
-        always the greedy one.
-
         One of the k imagined completions of a stochastic prefix.
 
         Re-applies the ONE stochastic op on a clone of `pre_board` seeded
@@ -1935,19 +1230,9 @@ class SearchRecommender:
 
         The completion runs on the same `S(..., sample_r)` stream, so a
         second roll inside the completion chains off it rather than off the
-        play stream -- imagination stays imagination all the way down.
+        play stream -- imagination stays imagination all the way down."""
 
-        The completion is GREEDY whatever the proposal decoder is doing
-        (`force_ranked_decode`, exp13 W0b' codex finding 2) -- see
-        `_call_bc_recommend` for why `deterministic=True` alone does not
-        achieve that and why the two decodes are allowed to differ.
-        """
-        # The greedy board comes from `_imagined_completion` rather than being
-        # inlined here, and that is deliberate: it keeps ONE failure site for
-        # a sample, which is what the fail-closed tests monkeypatch. Inlining
-        # it made those three tests pass while no longer reaching the code
-        # they pin -- the same shape as a gate that reports green having
-        # measured nothing.
+
         greedy_board = self._imagined_completion(walk, sample_r)
         if self.completion_policy == COMPLETION_BC_GREEDY:
             return [greedy_board]
@@ -1958,10 +1243,7 @@ class SearchRecommender:
         # the singular method's contract untouched.
         after = self._resample_after(walk, sample_r)
 
-        # exp22 W3. The greedy completion stays inner candidate 0, so the
-        # deepened arm inherits the outer search's "can never do worse than
-        # greedy" property: under `max`, a set whose every alternative scores
-        # lower keeps index 0, and `max` returns the FIRST maximal element.
+
         boards = [greedy_board]
         terminal_boards = 1
         unfinished_boards = 0
@@ -1970,24 +1252,8 @@ class SearchRecommender:
                 cand = self._sample_completion(after, sample_r, j)
                 if self.completion_tail == COMPLETION_TAIL_RESAMPLE:
                     chain = (cand or {}).get("chain_preview") or []
-                    # This tail's ENTIRE claim is that the board it hands to V
-                    # is an end-of-turn board, and two walk outcomes break that
-                    # while looking like success: `cap_reached` returns a
-                    # non-empty chain that simply ran out of steps, and
-                    # `sampled_no_action_left` (the pool emptied under the
-                    # mask) is not in RESAMPLABLE_EMPTY_STOPS, so an EMPTY
-                    # chain comes straight back -- and `_apply_chain(after, [])`
-                    # would score the unchanged MID-TURN board. `ok` is not
-                    # consulted at this call site and `_sample_candidate`'s own
-                    # docstring says an empty chain stays reachable.
-                    #
-                    # So it is dropped and counted, exactly as a raising
-                    # alternative already is: this sample degrades toward the
-                    # greedy completion, which is the accepted degradation, and
-                    # never toward a fiction. Found by the codex review,
-                    # 2026-08-21; measured incidence in that window was 0 of
-                    # 630, which is why it is a correctness fix and not a
-                    # performance one.
+
+
                     reason = str(((cand or {}).get("diagnostics") or {}).get("stop_reason") or "")
                     if not chain or reason in UNFINISHED_WALK_STOPS:
                         # RESCUED, not dropped: dropping would return fewer than
@@ -2006,19 +1272,8 @@ class SearchRecommender:
                 if self.completion_tail == COMPLETION_TAIL_GREEDY:
                     board = self._finish_completion_greedily(board)
             except Exception:
-                # One failed alternative must not lose the sample: the greedy
-                # completion is already in hand, so this degrades toward the
-                # old policy for this sample rather than dropping it.
-                #
-                # But it is COUNTED (2026-08-20, found by the exp22 line). It
-                # used to be a bare `continue`: the alternative vanished, and
-                # the telemetry recorded `search_completion_width`, which is
-                # the CONFIGURED width. So "inner width 8" was never checked
-                # against how many boards a sample actually got -- it could be
-                # 8 or 3 and the record said 8 either way. That is exactly the
-                # rule exp22's `AMENDMENT 6` registered for arms ("name the
-                # quantity that says the treatment took"), never applied to
-                # this deployed knob.
+
+
                 self._completion_dropped += 1
                 continue
             boards.append(board)
@@ -2049,22 +1304,6 @@ class SearchRecommender:
         completion stopped, so every completion this method returns is an
         end-of-turn board.
 
-        Reached only under `completion_tail == "finish_greedy"`. The default
-        is `"resample"`, which never gets here because its walk does not stop
-        early in the first place; `"stop"` is the pre-2026-08-21 behaviour and
-        does not get here either.
-
-        WHY THIS EXISTS (2026-08-20). Without it the inner candidates are not
-        comparable, and the measurement is not close: on one real mid-game
-        board, the greedy completion stopped on `end_turn_chosen` with 0 gold
-        left, while **0 of 40** sampled completions finished the turn -- 75%
-        stopped at the next structurally random op, 25% on a repeated board,
-        and 72% left gold unspent (mean 2.20). `_completion_agg` then took
-        `max` over one finished board and up to `completion_width - 1`
-        unfinished ones, and the V head is trained on end-of-turn boards, so
-        the unfinished ones are off-distribution exactly where a max is most
-        willing to believe them.
-
         `_sample_walk` stops early for two different reasons and BOTH are
         wrong HERE while being right where they came from:
 
@@ -2078,8 +1317,7 @@ class SearchRecommender:
 
         Deterministic given `board`, and `board` is a pure function of
         `(walk, sample_r, j)`, so CRN and reproducibility are unchanged.
-        Index 0 does not come through here: it already runs to END_TURN.
-        """
+        Index 0 does not come through here: it already runs to END_TURN."""
         finish = self._call_bc_recommend(
             board, deterministic=True, force_ranked_decode=True
         )
@@ -2141,16 +1379,10 @@ class SearchRecommender:
     ) -> tuple[int, int]:
         """`(decided, divergent)` over the imagined samples that had a CHOICE.
 
-        Did the inner search actually change the pick, or did it re-derive the
-        greedy completion every time. An arm that names an intervention has to
-        carry a measurement that the intervention happened; this is it, and the
-        gate on it lives upstream in the runner.
-
         A sample with fewer than two boards had nothing to decide and is
         counted in NEITHER total, so `bc_greedy` reports 0 of 0 rather than a
         vacuous 100% agreement -- a ratio computed off this pair therefore has
-        no denominator to divide by rather than a misleading one.
-        """
+        no denominator to divide by rather than a misleading one."""
         decided = 0
         divergent = 0
         for subs in sub_spans:
@@ -2164,13 +1396,7 @@ class SearchRecommender:
         return decided, divergent
 
     def _imagined_completion(self, walk: dict[str, Any], sample_r: int) -> dict[str, Any]:
-        """The greedy imagined completion of one stochastic sample.
-
-        Unchanged in name, signature and meaning: `w1_scoring_layer_probe`'s
-        reconstruction gate and `test_exp13_honest_frame` both call it and
-        both mean exactly this. Under `bc_greedy` it is also the only board a
-        sample contributes, so W3 does not move those callers.
-        """
+        """The greedy imagined completion of one stochastic sample."""
         after = self._resample_after(walk, sample_r)
         completion = self._call_bc_recommend(after, deterministic=True, force_ranked_decode=True)
         return _apply_chain(after, completion.get("chain_preview") or [])
@@ -2205,9 +1431,7 @@ class SearchRecommender:
         candidates: list[dict[str, Any]],
         opponent_team: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """exp13 A1 ruling 3: prefix dedup + expectation scoring on the V leaf.
-
-        1. Every candidate chain is reduced to its deterministic prefix
+        """1. Every candidate chain is reduced to its deterministic prefix
            (`_prefix_walk`) and the prefixes are deduped (`_prefix_group_key`)
            -- the committable unit is what gets ranked.
         2. Each group is turned into the boards V will score: ONE end board
@@ -2224,21 +1448,9 @@ class SearchRecommender:
         `search_error`, so a broken leaf costs strength and is counted, never
         a crashed game. That degradation is also the FAIL-CLOSED route for a
         prefix whose completions all failed: it is dropped rather than scored
-        on the proposal stream's own board -- see the drop site in step 2.
-        """
-        # `_reset_completion_counters` documents itself as "called at the top
-        # of both search entry points" and was only ever wired into
-        # `_search_anytime`. THIS is the path the arena arms take, so every
-        # per-segment completion instrument they reported was a running total
-        # for the life of the recommender. Measured on the shipped width-4 run
-        # `w4/n1000-5cd4688`, game 0: samples climb 99 -> 159 -> 204 -> ...
-        # across segments and never fall, and two consecutive segments that did
-        # no completion work at all (turn 5 segments 4 and 5) both report 627.
-        # Ratios survive that encoding -- which is why
-        # `completion_boards_mean` always read exactly the configured width and
-        # nothing ever said so -- but totals do not, and "did THIS segment do
-        # the work" becomes unanswerable, which is the question the completion
-        # telemetry gate exists to answer.
+        on the proposal stream's own board -- see the drop site in step 2."""
+
+
         self._reset_completion_counters()
         try:
             groups: dict[tuple[str, ...], dict[str, Any]] = {}
@@ -2253,10 +1465,8 @@ class SearchRecommender:
 
             boards: list[dict[str, Any]] = []
             spans: list[tuple[int, int]] = []
-            # exp22 W3: one entry per SURVIVING imagined sample, each a
-            # (start, stop) into `boards`. Under `bc_greedy` every entry has
-            # length 1 and the aggregator below degenerates to identity, so
-            # the group score is the same flat mean it has always been.
+
+
             sub_spans: list[list[tuple[int, int, int]]] = []
             kept: list[tuple[str, ...]] = []
             dropped: list[tuple[str, ...]] = []
@@ -2285,18 +1495,8 @@ class SearchRecommender:
                             # is simply taken over the samples that survived.
                             continue
                     if len(boards) == start:
-                        # ...but losing them ALL must not fall back to
-                        # `walk["board"]` (exp13 W0b', codex finding 3). That
-                        # board is the PROPOSAL stream's outcome: the one
-                        # roll the candidate generator happened to draw. Using
-                        # it here would score this prefix on a lucky/unlucky
-                        # single draw while its siblings are scored on a k-mean
-                        # -- reintroducing exactly the pick-the-lucky-roll bias
-                        # A1 removes, silently and only under failure. Fail
-                        # CLOSED instead: drop the prefix, and if the dropped
-                        # one is the greedy chain's (group 0, the tie-break
-                        # anchor) or if nothing survives, degrade the whole
-                        # decision to greedy via the outer handler.
+
+
                         dropped.append(key)
                         continue
                 kept.append(key)
@@ -2347,24 +1547,7 @@ class SearchRecommender:
             present = [float(m) for m in myopic_scores[a:b] if m is not None]
             group_myopic.append(_mean(present) if present else None)
 
-        # ------------------------------------------------------ MC rerank
-        # Ledger A2.6: V ranks the whole menu, then the top `mc_rerank_k`
-        # groups -- IN V ORDER, which is the half `DECISIONS.md:316` found the
-        # existing rollout operator getting wrong by shortlisting on a myopic
-        # score -- are re-ranked by rollouts to terminal.
-        #
-        # THE ONE REAL CHOICE HERE, stated where it is made. Under the honest
-        # frame a group whose prefix stops at a chance node has NO single
-        # committed board: it exists only as its `k` imagined completions, and
-        # at decision time the real roll has not happened. So a rollout for
-        # such a group must start from imagined boards, and the question is how
-        # to spend a budget of `m` across them. This spreads `m` round-robin
-        # over the group's own boards, so the cost is exactly `k * m` per
-        # decision -- the same grid the offline pricing used -- and the
-        # estimate covers the group's board distribution rather than favouring
-        # one completion. The alternative, `m` rollouts on EVERY board, is
-        # unbiased per board but costs `boards * m` and would not be the priced
-        # operator. Deterministic groups have one board and are unaffected.
+
         rerank_block: dict[str, Any] | None = None
         if self.mc_rerank_k > 0 and group_scores:
             v_ranked = sorted(
@@ -2528,11 +1711,8 @@ class SearchRecommender:
                 # once the turn is segmented -- not distinct whole-turn end
                 # boards, a unit this frame never commits.
                 "search_n_dedup": len(order),
-                # exp22 W3. The policy is on the row so a reader never has to
-                # infer which arm produced it, and `decided`/`divergent` are
-                # the measurement that the intervention happened at all: a
-                # v_search arm whose inner search re-derives the greedy
-                # completion every time did not deepen anything.
+
+
                 "search_completion_policy": self.completion_policy,
                 "search_completion_width": int(self.completion_width),
                 "search_completion_aggregate": self.completion_aggregate,
@@ -2551,11 +1731,8 @@ class SearchRecommender:
                     "scoring": SCORING_VGAME,
                     "turn_mode": self.turn_mode,
                     "stochastic_samples": int(self.stochastic_samples),
-                    # None when the rerank is off, which is every run before
-                    # exp22. When on, it carries what the arm has to PROVE:
-                    # the realised k and m, that the shortlist was taken in V
-                    # order, what it was scored on, and the order before and
-                    # after. A configured knob is not evidence the stage ran.
+
+
                     "mc_rerank": rerank_block,
                     "completion_boards_mean": (
                         float(self._completion_boards) / float(self._completion_samples)
@@ -2572,15 +1749,12 @@ class SearchRecommender:
                     "prefix_boundaries": [groups[key]["walk"]["boundary"] for key in order],
                     "prefix_stops": [groups[key]["walk"]["stop"] for key in order],
                     "prefix_lengths": [len(groups[key]["walk"]["ops"]) for key in order],
-                    # SAMPLES, not boards. Under `v_search` a sample carries
-                    # `completion_width` boards, so `b - a` stopped being the
-                    # sample count the moment W3 landed.
+
+
                     "prefix_n_samples": [len(subs) for subs in sub_spans],
                     "prefix_n_boards": [b - a for (a, b) in spans],
-                    # exp13 W0b' finding 3: prefixes whose k completions ALL
-                    # failed and were therefore dropped instead of scored on
-                    # the proposal stream. Always 0 on the engine as it stands;
-                    # emitted so a non-zero can never be invisible.
+
+
                     "prefix_n_dropped": len(dropped),
                     "prefix_sample_scores": [leaf_scores[a:b] for (a, b) in spans],
                     "decoded_candidate_chains": decoded_candidate_chains,
@@ -2614,10 +1788,7 @@ class SearchRecommender:
         candidate_chains: list[list[dict[str, Any]]] | None,
         n_dedup: int,
     ) -> dict[str, Any]:
-        """exp12 W2's learned leaf: ONE batched V forward over the deduped
-        stage-1 end boards, then argmax (module docstring's "exp12 W2").
-
-        Stage 1 is shared with every other mode, so the candidate set this
+        """Stage 1 is shared with every other mode, so the candidate set this
         scores is bit-identical to the set a rollout run at the same width
         would have scored. The score itself is
         `(1-blend)*V + blend*myopic - pessimism*ensemble_std`, computed by
@@ -2628,8 +1799,7 @@ class SearchRecommender:
         unset `wins` -- degrades to the greedy candidate with the search
         marked unused, exactly as a turn-1 skip does, plus `search_error` so
         the failure is visible in the report instead of silent. A game never
-        dies because the leaf did.
-        """
+        dies because the leaf did."""
         boards = [groups[sig]["end_board"] for sig in scored_sigs]
         myopic_scores = [groups[sig]["score"] for sig in scored_sigs]
         try:
@@ -2744,15 +1914,13 @@ class SearchRecommender:
                 "search_used": True,
                 "search_scoring": SCORING_ROLLOUT,
                 "search_n_candidates": len(scored_sigs),
-                # exp12 W2c (width curve): same meaning as in the myopic
-                # branch -- requested width vs distinct end boards.
+
+
                 "search_n_generated": int(self.n_candidates),
                 "search_n_dedup": int(len(scored_sigs) if n_dedup is None else n_dedup),
                 "search_scores": [float(groups[sig]["score"]) for sig in scored_sigs],
-                # Kept for continuity with the myopic schema: which deduped
-                # candidate MYOPIC scoring alone would have picked (may
-                # differ from the rollout-chosen one -- that divergence IS
-                # the W1 measurement).
+
+
                 "search_chosen_index": scored_sigs.index(best_myopic_sig),
                 "search_greedy_score": (float(greedy_score) if greedy_score is not None else None),
                 "search_diagnostics": {
@@ -2765,19 +1933,15 @@ class SearchRecommender:
                     "rollout_shortlist": int(self.rollout_shortlist),
                     "rollout_repeats": int(self.rollout_repeats),
                     "rollout_ksim": int(self.rollout_ksim),
-                    # exp10 W2: which opponent-source mode produced these
-                    # rollout scores -- see module docstring's "exp10 W2"
-                    # section. Always "true" unless a caller opted into the
-                    # ablation via the constructor kwarg of the same name.
+
+
                     "rollout_opponent_mode": self.rollout_opponent_mode,
-                    # exp09 W2: None unless `capture_candidate_chains=True`;
-                    # aligned index-for-index with `myopic_scores` above (the
-                    # full stage-1 deduped candidate set, NOT just the
-                    # shortlist) -- see module docstring.
+
+
                     "candidate_chains": candidate_chains,
                 },
-                # exp12 route a (wave A0): None unless
-                # `capture_teacher_record=True`. See `_build_teacher_record`.
+
+
                 "teacher_record": teacher_record,
             }
         )
@@ -2795,24 +1959,7 @@ class SearchRecommender:
         teacher_chains: list[list[dict[str, Any]]] | None,
         n_dedup: int | None,
     ) -> dict[str, Any]:
-        """exp12 route a (wave A0): the per-decision distillation record.
-
-        One entry per SCORED stage-1 candidate (index-aligned with
-        `search_scores`/`myopic_scores`), each carrying the exact end board
-        that was handed to scoring, the candidate's chain, its myopic score
-        and -- for the shortlisted ones the teacher actually rolled out --
-        its rollout score, per-repeat outcomes and the CRN keys those
-        repeats used. `chosen_index` is the ROLLOUT winner, i.e. the
-        candidate the driver is about to play (NOT `search_chosen_index`,
-        which stays the myopic argmax for schema continuity with W6a).
-
-        `chosen_teacher_score` is read off the DECISION path
-        (`rollout_by_sig[best_sig]`) while the per-candidate scores are
-        built in the loop below, so the checker tool's "the chosen
-        candidate's recorded score is the score the driver acted on" gate
-        compares two independently indexed reads and can actually catch an
-        index misalignment.
-        """
+        """Build teacher record."""
         candidates_out: list[dict[str, Any]] = []
         for i, sig in enumerate(scored_sigs):
             roll = rollout_by_sig.get(sig)
@@ -2838,10 +1985,8 @@ class SearchRecommender:
                     ),
                     "chosen": sig == best_sig,
                     "chain": chain,
-                    # The EXACT object scoring was handed -- `_apply_chain`'s
-                    # output, pre-`resolve_end_turn_pre_battle`, which is the
-                    # board both training (the W1'a afterstate contract) and
-                    # serving (search's own hand) are on.
+
+
                     "state": copy.deepcopy(groups[sig]["end_board"]),
                 }
             )
@@ -2871,14 +2016,7 @@ class SearchRecommender:
     def _choose_rollout_opponent_pid(
         self, *, true_pid: str | None, current_turn: int, rng: random.Random
     ) -> dict[str, Any]:
-        """exp10 W2 (opponent-source ablation): pick the pid whose recorded
-        chain a rollout continuation should follow INSTEAD of `true_pid`,
-        for `self.rollout_opponent_mode in {"pool_random", "retrieval"}` --
-        see module docstring's "exp10 W2" section. Never called when
-        `self.rollout_opponent_mode == ROLLOUT_OPPONENT_TRUE` (the caller,
-        `_rollout_score_candidate`, skips this entirely for that mode).
-
-        `"pool_random"`: uniform draw over `self.opp_source.all_pids` --
+        """`"pool_random"`: uniform draw over `self.opp_source.all_pids` --
         already exactly the eval frame's own opponent pool (e.g.
         val/Turtle/rank<=1500, whatever `opp_source` was constructed with)
         -- EXCLUDING `true_pid`, so the draw can never silently coincide
@@ -2904,8 +2042,7 @@ class SearchRecommender:
         just that one repeat (equivalent to `"true"` for that draw only,
         never a hard failure).
 
-        Returns `{"pid": str | None, "fallback_tier": str}`.
-        """
+        Returns `{"pid": str | None, "fallback_tier": str}`."""
         all_pids = self.opp_source.all_pids
         pool = [p for p in all_pids if p != true_pid] or list(all_pids)
         if not pool:
@@ -2940,36 +2077,11 @@ class SearchRecommender:
         every subsequent turn (`eval_versus_fullgame.py::play_out_game`)
         reverts to that driver's default (1).
 
-        exp10 W2 (opponent-source ablation, module docstring's "exp10 W2"
-        section): when `self.rollout_opponent_mode != "true"`, ONE
-        alternate pid is drawn per repeat (`_choose_rollout_opponent_pid`,
-        an isolated RNG keyed on `(mode, seed, recommend_call_count,
-        candidate_index, repeat_index)`) and spliced into
-        `board_copy["meta"]["versus"]["current_opponent_participation_id"]`
-        BEFORE this turn resolves -- the EXISTING sampling plumbing
-        (`sample_for_pid_fn=self.opp_source.sample_for_pid`, completely
-        unmodified/unwrapped) then follows THAT pid's recorded chain, with
-        the SAME chain-then-random-fallback behavior the `"true"` mode
-        already relies on. `"true"` mode (the default) never touches
-        `board_copy`, so it is byte-identical to this method's pre-W2 body.
-
         Never raises: a repeat whose current-turn battle resolution itself
         fails (e.g. both the followed chain AND the isolated random
         fallback come up empty for this turn -- `end_turn_failed`) scores
         0.5 (treated as a no-result), the same bucket a genuine turn-cap
-        gets, rather than aborting the whole candidate.
-
-        Returns `{"score": float, "mean_outcome": float, "mean_lives_diff":
-        float, "n_repeats": int, "repeat_outcomes": list[float],
-        "rollout_opponent_mode": str, "true_followed_pid": str | None,
-        "repeat_chosen_opponent_pids": list[str | None],
-        "repeat_fallback_tiers": list[str],
-        "repeat_opponent_pid_traces": list[list[{"turn": int,
-        "opponent_pid_used": str | None}]]}` -- the last four keys are the
-        exp10 W2 correctness-proof evidence (module docstring), present
-        (empty-safe) for every mode so a consumer never needs a schema
-        branch.
-        """
+        gets, rather than aborting the whole candidate."""
         # Lazy import: avoids a module-level cycle (eval_versus_fullgame.py
         # imports THIS module at its own top level already) -- mirrors this
         # repo's own precedent for the identical reason
@@ -2989,11 +2101,8 @@ class SearchRecommender:
         repeat_chosen_opponent_pids: list[str | None] = []
         repeat_fallback_tiers: list[str] = []
         repeat_opponent_pid_traces: list[list[dict[str, Any]]] = []
-        # exp12 route a (wave A0): the exact CRN key / engine seed each
-        # repeat ran under, so a recorded decision proves on its own face
-        # that its sibling candidates shared repeat r's future (the checker
-        # tool's CRN gate compares these across a decision group) instead of
-        # anyone having to trust the flag was on.
+
+
         repeat_crn_keys: list[str] = []
         repeat_engine_seeds: list[int | None] = []
         n_repeats = max(1, int(self.rollout_repeats if repeats is None else repeats))
@@ -3009,13 +2118,7 @@ class SearchRecommender:
 
             board_copy = copy.deepcopy(end_board)
 
-            # exp12 route a (wave A0): share the SHOP stream across siblings.
-            # Without this each candidate's continuation inherits whatever
-            # engine seed its own shop actions chained to, so candidate A and
-            # candidate B see different turn-(t+1) shops -- pure comparison
-            # noise. Only applied when the board already declares its seed
-            # known (`_new_game_state` always does); never forced onto a
-            # deliberately-unseeded state.
+
             engine_seed: int | None = None
             if self.rollout_crn:
                 copy_meta = board_copy.setdefault("meta", {})
@@ -3024,8 +2127,7 @@ class SearchRecommender:
                     copy_meta["seed"] = int(engine_seed)
             repeat_engine_seeds.append(engine_seed)
 
-            # exp10 W2: see this method's own docstring + module docstring's
-            # "exp10 W2" section. No-op for the default "true" mode.
+
             chosen_pid: str | None = None
             fallback_tier = "true_mode_passthrough"
             if self.rollout_opponent_mode != ROLLOUT_OPPONENT_TRUE:
@@ -3045,12 +2147,7 @@ class SearchRecommender:
             repeat_chosen_opponent_pids.append(chosen_pid)
             repeat_fallback_tiers.append(fallback_tier)
 
-            # exp10 W2: per-turn proof trace -- the pid `resolve_end_turn_
-            # with_sampled_battle` actually used to sample the opponent
-            # board this turn, read back from `state_after`'s own versus
-            # meta (the single source of truth that field already is, see
-            # `_read_current_opponent_pid`). Appended once per turn
-            # regardless of mode.
+
             opponent_pid_trace: list[dict[str, Any]] = []
 
             def _record_pid_used(turn: Any, state_after: dict[str, Any] | None) -> None:
@@ -3114,11 +2211,8 @@ class SearchRecommender:
                 opponent_mode=(_evf.OPPONENT_MODE_ARENA if is_arena
                                else _evf.OPPONENT_MODE_CHAIN),
                 turn_mode=self.turn_mode,
-                # exp10 W2: reuses `play_out_game`'s existing W2(exp09)
-                # `on_turn` hook (this repo's established per-turn tap point,
-                # already zero-cost when unset) to extend the proof trace
-                # across every subsequent turn of the continuation, not just
-                # the candidate's own turn above.
+
+
                 on_turn=lambda payload: _record_pid_used(payload.get("turn"), payload.get("state_after")),
             )
             win = bool(remainder["win"])
@@ -3154,13 +2248,8 @@ class SearchRecommender:
             "repeat_outcomes": outcomes,
             "rollout_crn": bool(self.rollout_crn),
             "crn_decision_id": self._crn_decision_id(),
-            # exp12 route a (wave A0): per-repeat lives margin (the tiebreak
-            # term's own components) + the CRN evidence the checker's T4 gate
-            # compares across a decision group. Only emitted for the RECORDER,
-            # because these ride into `search_diagnostics` and therefore into
-            # every per-game JSONL row: at the deployable preset they would add
-            # ~7 KB per game to a file that is already ~98 KB per game, bought
-            # by nobody who is not recording.
+
+
             **(
                 {
                     "repeat_lives_diffs": lives_diffs,
@@ -3170,8 +2259,8 @@ class SearchRecommender:
                 if self.capture_teacher_record
                 else {}
             ),
-            # exp10 W2: correctness-proof evidence, see this method's own
-            # docstring + module docstring's "exp10 W2" section.
+
+
             "rollout_opponent_mode": self.rollout_opponent_mode,
             "true_followed_pid": true_pid,
             "repeat_chosen_opponent_pids": repeat_chosen_opponent_pids,
@@ -3179,15 +2268,9 @@ class SearchRecommender:
             "repeat_opponent_pid_traces": repeat_opponent_pid_traces,
         }
 
-    # ------------------------------------------------------------------
-    # exp16 W3: the ANYTIME face of the honest search. Added as NEW methods
-    # only -- `recommend`, `_search` and `_search_vgame_honest` are untouched
-    # (exp16 PLAN risk 6: exp13 is flying on those, so this line may only add).
-    # ------------------------------------------------------------------
-    def set_candidate_stream(self, key: int) -> None:
-        """exp16 W3: pin candidate sampling to the DECISION, not to the process.
 
-        `_rng_for_candidate` keys the per-candidate sampling RNG on
+    def set_candidate_stream(self, key: int) -> None:
+        """`_rng_for_candidate` keys the per-candidate sampling RNG on
         `SeedSequence([seed, _recommend_call_count, index])`, and that counter
         is a PROCESS counter: it counts how many `recommend()` calls this
         object has served since it was constructed. That is the right default
@@ -3195,19 +2278,11 @@ class SearchRecommender:
         all it has to buy -- but it makes a decision depend on how many
         decisions came before it in the same process.
 
-        For a duel that has to be archivable and replayable (exp16 W6) that
-        is fatal: replaying the same game a second time in the same process
-        starts the counter where the first run left it, so the second run's
-        candidates are different chains and the game diverges at turn 1.
-        Measured exactly that way, and it was the ONLY source of divergence
-        (`duel_smoke.py`'s replay check).
-
         So the duel worker calls this once per SEGMENT with a key derived
         from `(engine_seed, turn, segment_index)` -- the same tuple A1's
         imagination stream is keyed on, for the same reason -- and the next
         `recommend`/`recommend_anytime` call runs on exactly `key`. Nothing
-        else calls it, so the driver's counter behaviour is untouched.
-        """
+        else calls it, so the driver's counter behaviour is untouched."""
         self._recommend_call_count = int(key) - 1
 
     def recommend_anytime(
@@ -3230,14 +2305,6 @@ class SearchRecommender:
         TIME rather than at a preset width, and the caller needs a best-so-far
         answer at whatever moment that is.
 
-        The human pressing "End turn" is NOT one of those stops, and an
-        earlier version of this docstring said it was ("the AI has to commit
-        within a fraction of a second"). `16-play-vs-ai/
-        PLAN_A2_FIXED_CLOCK_8766.md` removed human-stop truncation and
-        `ai_worker.request_stop` records it in one line ("Human End Turn no
-        longer stops inference"); `_should_stop` reads only the generation, a
-        chunk budget and two wall-clock deadlines.
-
         There is no interruption point INSIDE a chunk and this method does not
         pretend otherwise: `should_stop` is consulted at chunk boundaries only.
         `chunk_size` ships at 1, so that boundary is every single candidate.
@@ -3250,19 +2317,10 @@ class SearchRecommender:
         is the BOOKKEEPING that `_search_vgame_honest` does in one pass and
         this one does incrementally -- grouping, spans, argmax.
 
-        EXACT AGREEMENT WHEN NOTHING STOPS IT. Candidates are generated in
-        the same index order (`_generate_candidate` is a pure function of
-        `(state, index)`), groups keep first-seen order, and the argmax uses
-        the same `(group_score, group_myopic)` key resolved to the FIRST
-        maximum -- so with no stop request and the full width this returns
-        the same chain as `recommend()`. internal project notes
-        duel_smoke.py --equivalence-states 20` is the check on real states.
-
         The one deliberate difference in the RESULT: `search_n_generated` is
         how many candidates this call actually generated, not the configured
         width, because under a stop those differ and the UI has to show the
-        human the width the AI really got.
-        """
+        human the width the AI really got."""
         if not (self.honest and self.scoring == SCORING_VGAME):
             raise ValueError(
                 f"search_recommender_anytime_requires_honest_vgame:"
@@ -3336,30 +2394,11 @@ class SearchRecommender:
         Returns `(boards, subs)`. `boards` is 1 board if the prefix is
         deterministic, else the surviving imagined samples' completions
         concatenated. `subs` carries one `(start, stop, sample_r)` per
-        SURVIVING sample, as offsets into `boards`.
-
-        exp16 A3: `subs` is the whole point. It is what lets the caller take
-        the same TWO-LAYER score `_search_vgame_honest` takes -- mean over the
-        imagined samples of `_completion_agg` over that sample's inner
-        completions -- instead of one flat mean over every board. Under
-        `bc_greedy` each sub-span has length 1, `_completion_agg` returns it
-        unchanged, and the group score is the flat mean over samples this path
-        has always computed.
-
-        Empty `boards` means every completion failed, and the caller must DROP
-        the group rather than fall back to the proposal stream's own board --
-        exp13 W0b' codex finding 3, restated here because the failure is
-        silent and only shows up under failure.
-        """
+        SURVIVING sample, as offsets into `boards`."""
         if walk["boundary"] is None:
             return [walk["board"]], [(0, 1, 0)]
-        # exp16 A3 landed the sub-span bookkeeping this path was missing, so
-        # `v_search` is no longer refused here. It buys depth by searching
-        # less WIDTH inside the same clock -- a strength trade, not a latency
-        # one, because human-stop truncation does not exist any more (see
-        # `recommend_anytime`'s docstring). Chunking is untouched: a chunk is
-        # one candidate, so the interruption grain is already the finest it
-        # can be and a costlier candidate does not coarsen it.
+
+
         boards: list[dict[str, Any]] = []
         subs: list[tuple[int, int, int]] = []
         for sample_r in range(1, self.stochastic_samples + 1):
@@ -3375,16 +2414,9 @@ class SearchRecommender:
     ) -> tuple[list[dict[str, Any]], tuple[int, int, int] | None]:
         """ONE imagined sample's inner boards, and its span at `offset`.
 
-        Split out of `_anytime_group_boards` (W11b) so the `resample-clock`
-        gear can add a LATER sample to a group that was already scored,
-        through the identical code path the first `stochastic_samples` went
-        through. A second implementation would be the obvious way to get a
-        different frame by accident.
-
         `(boards, None)` means every completion of this sample failed. Losing
         ONE sample must not lose the candidate; losing them all is what the
-        caller's drop handles.
-        """
+        caller's drop handles."""
         try:
             got = self._imagined_completions(walk, sample_r)
             if not got:
@@ -3427,10 +2459,8 @@ class SearchRecommender:
         # the other -- the same pair `_search_vgame_honest` reports.
         group_n_samples: list[int] = []
         group_n_boards: list[int] = []
-        # W11b. A later k-level reopens a group that was already scored, so the
-        # per-SAMPLE aggregates are carried rather than only their mean: adding
-        # a sample is then appending one number and re-taking the mean, over
-        # the identical two-layer shape the first pass used.
+
+
         group_aggs: list[list[float]] = []
         group_keys_in_order: list[tuple[str, ...]] = []
         v_scores: list[float] = []
@@ -3589,33 +2619,14 @@ class SearchRecommender:
                 stopped = True
                 break
 
-        # ------------------------------------------------------ W11b: more k
-        # The `resample-clock` gear pins the OUTER width and spends whatever is
-        # left of the segment's slice on more imagined samples instead.
-        #
-        # LEVEL-SYNCHRONOUS on purpose. `group_scores` is a mean over samples,
-        # so a group holding more samples than its siblings is not inflated the
-        # way a bigger inner `max` would be -- but it does carry less variance,
-        # and an argmax over unequal variances favours the noisy ones. Equal
-        # samples costs nothing here and removes the question.
-        #
-        # A level is BUILT in full and only then committed, and `should_stop`
-        # is consulted only BETWEEN levels. A half level would hand back
-        # exactly the unequal-variance ranking this is avoiding.
-        # Which groups are eligible to hold imagined samples at all. A
-        # deterministic prefix contributes exactly one board and never takes
-        # part, so it must not count toward either the synchrony check or the
-        # "did any sampling happen" question.
+
         random_groups = [
             gi for gi, key in enumerate(order)
             if groups[key]["walk"].get("boundary") is not None
         ]
         extra_levels = 0
-        # Seconds per level, kept per level rather than as a mean. PLAN_W11 W2
-        # asks for this measured rather than extrapolated from the price table,
-        # which is only trustworthy near width 72 and is off by a third at
-        # 1024. It is also the operator-facing answer to "will another level
-        # fit in this slice", which no other field answers.
+
+
         extra_level_seconds: list[float] = []
         if extra_samples_until_stop and not stopped and order:
             next_r = int(self.stochastic_samples)
@@ -3745,28 +2756,15 @@ class SearchRecommender:
                 # `recommend_anytime`'s docstring.
                 "search_n_generated": int(generated),
                 "search_n_dedup": len(order),
-                # exp16 A3, mirroring the one-pass path field for field: the
-                # policy is on the row so a reader never has to infer which arm
-                # produced it, and `decided`/`divergent` are the measurement
-                # that the intervention happened at all. A `v_search` arm whose
-                # inner search re-derives the greedy completion every time
-                # deepened nothing.
+
+
                 "search_completion_policy": self.completion_policy,
                 "search_completion_width": int(self.completion_width),
                 "search_completion_aggregate": self.completion_aggregate,
                 "search_completion_decided": int(decided_here),
                 "search_completion_divergent": int(divergent_here),
-                # W11b. What the `resample-clock` gear actually did. The gear is
-                # the only thing that can raise these above the configured
-                # `stochastic_samples`, so a non-zero level count IS its
-                # treatment-took gate: name the quantity that says the
-                # intervention happened, never infer it from the config.
-                # None, not a number, when no random-prefix group contributed
-                # a sample: a deterministic-only search did no sampling at all,
-                # and reporting the CONFIGURED k there would render as
-                # "3 (no extra)" on the replay page, i.e. as a measurement.
-                # Absent is not zero, and this is the one place it is
-                # load-bearing. (codex review, 2026-08-21.)
+
+
                 "search_realised_stochastic_samples": (
                     int(self.stochastic_samples) + int(extra_levels)
                     if random_groups else None
@@ -3869,19 +2867,15 @@ class SearchRecommender:
         own hard-failure contract) rather than propagating.
         """
         self._recommend_call_count += 1
-        # exp12 route a (wave A0): the decision's turn, for the CRN key and
-        # the teacher record. Read defensively (never raises) -- a state
-        # without a usable turn simply leaves this None and `_crn_decision_id`
-        # falls back to the recommend counter.
+
+
         turn_value = state.get("turn") if isinstance(state, dict) else None
         try:
             self._decision_turn = int(turn_value) if turn_value is not None else None
         except (TypeError, ValueError):
             self._decision_turn = None
-        # exp13 A1: the fallback base for `_imagination_seed` when a caller
-        # never set the driver context. Read here, once, off the state this
-        # decision was handed (which under the driver is ALREADY the imagined
-        # clone, i.e. S(engine_seed, turn, segment, 0)).
+
+
         self._state_seed = honest_frame.read_engine_seed(state) if isinstance(state, dict) else 0
         try:
             # A2.5: candidate 0 is the greedy ANCHOR -- the tie-break that

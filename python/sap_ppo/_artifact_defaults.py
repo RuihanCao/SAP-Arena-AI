@@ -1,12 +1,6 @@
 """Default locations of trained artifacts, public-release edition.
 
-The private tree keeps these pointing at its own experiment directories. Here
-they point at a plain `models/` directory, because the published weights are
-distributed separately rather than living in this repository. Every value can be
-overridden by environment variable.
-
-See the README for where to download the weights.
-"""
+See the README for where to download the weights."""
 from __future__ import annotations
 
 import os

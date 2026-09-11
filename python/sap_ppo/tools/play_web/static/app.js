@@ -34,37 +34,10 @@
     let historyEntries = [];
     let historyToken = null;
 
-    /* exp16: ONE mutating request at a time, and only on the mutating path.
 
-       THE DEFECT (Ruihan, 2026-08-19): a shop click stalls, he clicks again,
-       and when the first buy comes back the second one buys a second food he
-       did not want. Two clicks are two POSTs and both are legal when they
-       arrive. This file already knew the shape of it -- `handledTransportFailure`
-       refuses to retry a lost request because "a buy or a roll is not
-       idempotent, and a retry after a lost reply spends the gold twice" -- but
-       only the AUTOMATIC retry was ever guarded, never the human's own second
-       click.
-
-       Holds the label of the action in flight, so the refusal can name it.
-       Deliberately NOT around `apiGet`, `refresh`, the catalog fetch or the
-       duel's status poll: those are read-only, they are meant to overlap, and
-       `duel_app.py::status` takes no lock precisely so it can answer several
-       times a second while a mutation is running. */
     let mutationInFlight = null;
 
-    /* exp16 W5: the three seams that let a SECOND page (the duel, /play) serve
-       this same skin without a second copy of it.
 
-       `setHTML` / `bind` make every element this file touches optional. The
-       sandbox page has all of them, so nothing about it changes (exp14's gate
-       is the proof); the duel page leaves out the panels that mean nothing in
-       a duel -- the tempo recommendation, the sampled-battle drawer, the debug
-       tooling -- and simply gets no output for them instead of a null deref
-       that would take the whole page down with it.
-
-       `afterRender` is called at the end of every `renderState`, so a page
-       that draws chrome of its own (the opponent lane, the thinking badge)
-       repaints in lockstep with the board rather than on a timer of its own. */
     function setHTML(id, html) {
       const el = document.getElementById(id);
       if (el) el.innerHTML = html;
@@ -263,48 +236,7 @@
         : null;
     }
 
-    /* Match every pet on the new board to the pet it used to be, BY PET and
-       not by slab.
 
-       Matching on slab index alone reads any reposition as "a different pet
-       appeared on this slab", and the fallback for a different pet is a diff
-       against catalog BASE stats -- so a single drag made every pet that had
-       ever been fed flash a +atk/+hp it had not just received (Ruihan on
-       :8766, 2026-08-03; `gate_move_pet.py` is that report as a test).
-
-       WITH `slotMap` THERE IS NOTHING TO GUESS. It is the permutation the
-       engine's own actions spell out, so every pet is paired with the pet that
-       really was there -- whether it stayed, moved, was buffed, or moved AND
-       was buffed in the same transition (buying onto an occupied slab shoves a
-       neighbour that the on-buy ability just buffed).
-
-       THE FOUR PASSES BELOW ARE THE FALLBACK, for transitions that arrive with
-       no actions (`refresh`, the custom-action box, undo, reset) or whose
-       actions could not be vouched for. They are a guess, and one that is
-       wrong in a knowable way: two same-name pets that are BOTH changed by the
-       same transition trade identities in pass 2. Two Fish at 2/3 and 3/4,
-       both buffed +1/+1: the new 3/4 matches the OLD 3/4, reads as a move, and
-       loses its own +1/+1 -- while the other slab, whose partner is now
-       claimed, falls through to base stats for a +2/+2 that never happened.
-       That is the reason the action mapping exists and is preferred whenever
-       it is there.
-
-         1. same slab, and not one field about the pet changed
-              -> it stayed put and nothing happened to it. Claiming it FIRST
-                 is what stops pass 2 from handing it to a same-name lookalike
-                 that shifted into a neighbouring slab.
-         2. any unclaimed slab, every field identical
-              -> that is what a drag looks like from the outside, and also what
-                 the shove a drag gives its neighbours looks like.
-         3. same slab, same name, different numbers
-              -> it stayed and something happened to it. This is the buff and
-                 level-up path.
-         4. nothing matched
-              -> a genuinely new pet, so diff against base stats and a summon
-                 buff still shows.
-
-       Either way one pet on the old board is claimed at most once, so two
-       slabs can never both diff against it. */
     function pairTeamSlots(beforeTeam, afterTeam, slotMap) {
       const before = teamBySlab(beforeTeam);
       const after = teamBySlab(afterTeam);
@@ -419,9 +351,7 @@
       return byIndex;
     }
 
-    /* The team diff is pure, so it is judged without a DOM: `js/team_fx_probe.js`
-       loads THIS file in node and drives these four, the same way W5.1's board
-       probe drives `duel.js`. */
+
     if (typeof window !== 'undefined') {
       window.__SAP_FX_INTERNALS = {
         computeTeamFx,
@@ -464,12 +394,12 @@
       const bits = [
         `surface: ${surface.name}`,
         `commit: ${b.commit_short || 'unknown'}${b.dirty ? ' (dirty)' : ''}`,
-        `ref: ${b.head_ref || 'unknown'}`,
+        `version: ${b.version || 'unknown'}`,
         `composed gestures: ${surface.compose_enabled ? 'on' : 'off'}`,
         `imagined-walk validation: ${surface.imagined_validation_skipped ? 'SKIPPED' : 'on'}`,
       ];
       el.textContent = bits.join('  ·  ');
-      el.title = `${b.repo_root || ''}\n${b.module_path || ''}`;
+      el.title = 'Local demo build';
     }
 
     function composeEnabled() {
@@ -711,11 +641,7 @@
       + '<ellipse cx="17.5" cy="19" rx="3.2" ry="2.6" fill="#ffffff" opacity="0.9"'
       + ' transform="rotate(-25 17.5 19)"/>'
       + '</svg>';
-    // Versus has no trophy race, so the fourth chip carries the OPPONENT's
-    // lives. Round 3 drew crossed swords in a desaturated grey that read as a
-    // second, colder icon system; this is the same heart silhouette the lives
-    // chip uses, in the game's own blue, so the chip is one saturated coloured
-    // body and the colour alone says whose lives these are.
+
     const VERSUS_SVG = '<svg class="stat-icon" viewBox="5.5 6.5 39 39" aria-hidden="true">'
       + `<path d="${HEART_PATH}" fill="#2f7fc4" stroke="#000000" stroke-width="4" stroke-linejoin="round"/>`
       + '<ellipse cx="17.5" cy="19" rx="3.2" ry="2.6" fill="#ffffff" opacity="0.9"'
@@ -778,11 +704,7 @@
       + '<path d="M2.5 20L14 8.5h23.5a4 4 0 0 1 4 4v15a4 4 0 0 1-4 4H14z" fill="#651f00"/>'
       + '<circle cx="16.5" cy="20" r="4" fill="#ff6a00"/>'
       + '</svg>';
-    /* Snowflake, redrawn for round 4 against the reference button: six chunky
-       arms on a 40-box, each carrying two pairs of V barbs, growing out of a
-       thick hexagon with a round hole punched through its middle. Round 3 drew
-       thin filled slivers that read as an asterisk; these are strokes as heavy
-       as the label's own letterforms. */
+
     const SNOWFLAKE_PATHS = '<g fill="none" stroke-width="5.2" stroke-linecap="round"'
       + ' stroke-linejoin="round">'
       + '<path d="M26.4 20.0L23.2 14.5L16.8 14.5L13.6 20.0L16.8 25.5L23.2 25.5Z"/>'
@@ -811,12 +733,7 @@
     // The pet keeps every one of its own colours; the block is translucent so it
     // reads through, has a pure black keyline and hard white highlight streaks,
     // and carries no blur, no glow, no grayscale and no hairline ring.
-    /* Round 3 drew a perspective cube: a top face, a side face and a vertical
-       edge, which reads as isometric line art and not as this game's flat
-       sticker idiom. Round 4 draws ONE flat irregular ice shard, faceted with
-       a couple of chunky planes, keylined in pure black at the same weight as
-       the rest of the scene, and translucent enough that the pet under it keeps
-       every one of its own colours and stays readable. */
+
     const ICE_SILHOUETTE = 'M54 4L86 14L100 46L94 92L62 114L30 110L6 84L4 38L28 10Z';
     const ICE_BLOCK_SVG = '<svg class="ice-block" viewBox="0 0 104 118" aria-hidden="true">'
       + `<path d="${ICE_SILHOUETTE}" fill="rgba(150,222,247,0.15)"/>`
@@ -910,11 +827,7 @@
       + '<circle cx="17" cy="16.5" r="4.6" fill="#ff6a00"/>'
       + '</svg>';
 
-    /* Level plaque, redrawn for round 4: an irregular hand-drawn black blob of
-       about 42x33 rather than a wide rounded pill, with the gold numeral drawn
-       large enough that it breaks above the plaque's top edge, and the
-       experience as brown pills that touch each other, nearly fill the lower
-       half and bulge out of the bottom silhouette. */
+
     const LVL_PLAQUE_PATH = 'M6.4 11.8L41.4 10.2C44.1 10.1 45.3 11.5 45.1 14.3L44.3 39.4'
       + 'C44.2 42.1 42.5 43.1 40.0 42.9L7.2 42.1C4.4 42.0 3.0 40.7 3.2 38.0L3.7 14.4'
       + 'C3.8 11.9 4.7 11.9 6.4 11.8Z';
@@ -960,14 +873,7 @@
         + `<span class="stat-val">${value}</span></span>`;
     }
 
-    /* WHICH WAY A PET FACES (exp16 W5.1). The pack draws every pet facing
-       LEFT. Every board this file renders is the human's OWN, so it is
-       mirrored and the front rank faces right, at the enemy. A board drawn for
-       the ENEMY side (`location === 'enemy'`, which only the duel page asks
-       for) keeps the art's own direction, so the two teams face each other --
-       what the real client's battle frames show (exp15
-       `strips_final/strip_00`, REAL row). Anything else keeps today's
-       behaviour, so the sandbox page is untouched. */
+
     function spriteClass(slotType, location) {
       if (slotType !== 'pet') return 'sprite';
       return location === 'enemy' ? 'sprite' : 'sprite mirror-x';
@@ -1204,6 +1110,40 @@
 
     function shopPopupHTML(slot) {
       return '';
+    }
+
+    // Read-only boards share the shop's sprites and badges, but not its
+    // selection, drag state or ability counters. Used by both end screens.
+    function readOnlyBoardCardHTML(slot, side) {
+      const enemy = side === 'ai';
+      const enemyCls = enemy ? ' is-enemy' : '';
+      const itemId = slot && slot.pet_id;
+      if (!itemId) {
+        return `<div class="card team-card is-empty is-readonly${enemyCls}">` + SLAB_SVG + '</div>';
+      }
+      const atk = slot.attack ?? 0;
+      const hp = slot.health ?? 0;
+      const tip = `${prettyItemName(itemId)} ${atk}/${hp}, Lvl ${slot.level ?? 1}`;
+      return [
+        `<div class="card team-card is-readonly${enemyCls}" title="${tip}">`,
+        SLAB_SVG,
+        levelRowHTML(slot.level ?? 1, slot.exp ?? 0),
+        spriteHTML('pet', itemId, enemy ? 'enemy' : 'own'),
+        petStatsHTML(atk, hp),
+        equipmentHTML(slot),
+        '</div>',
+      ].join('');
+    }
+
+    function renderReadOnlyBoard(el, team, side) {
+      if (!el) return 0;
+      const enemy = side === 'ai';
+      const slots = Array.isArray(team) ? team.slice() : [];
+      // Human slot 0 faces right; the opponent's slot 0 faces left.
+      slots.sort((a, b) => ((a.slot_index ?? 0) - (b.slot_index ?? 0)) * (enemy ? 1 : -1));
+      el.innerHTML = slots.map((slot) => readOnlyBoardCardHTML(slot, side)).join('');
+      if (el.dataset) el.dataset.side = enemy ? 'ai' : 'human';
+      return slots.filter((slot) => slot && slot.pet_id).length;
     }
 
     function teamCardHTML(slot) {
@@ -1495,7 +1435,7 @@
             ? `<div style="margin-top:8px;"><span class="hint">Sampled Turn Image</span></div><div class="battle-replay-wrap"><a href="${battle.sampled_turn_image_url}" target="_blank" rel="noopener"><img class="battle-replay-image" src="${battle.sampled_turn_image_url}" alt="Sampled single-turn image" /></a></div>`
             : '<div style="margin-top:8px;"><span class="hint">Sampled turn image unavailable.</span></div>';
           const sessionReplayImage = battle.session_replay_image_url
-            ? `<div style="margin-top:8px;"><span class="hint">SAP_PPO Session Replay</span></div><div class="battle-replay-wrap"><a href="${battle.session_replay_image_url}" target="_blank" rel="noopener"><img class="battle-replay-image" src="${battle.session_replay_image_url}" alt="Session replay image" /></a></div>`
+            ? `<div style="margin-top:8px;"><span class="hint">Session Replay</span></div><div class="battle-replay-wrap"><a href="${battle.session_replay_image_url}" target="_blank" rel="noopener"><img class="battle-replay-image" src="${battle.session_replay_image_url}" alt="Session replay image" /></a></div>`
             : '<div style="margin-top:8px;"><span class="hint">Session replay image unavailable.</span></div>';
           const timing = (battle.timing_ms && typeof battle.timing_ms === 'object') ? battle.timing_ms : null;
           const consoleRows = [
@@ -1672,9 +1612,9 @@
       el.classList.add('show');
     }
 
-    // The durable message line lives in the dev drawer at the bottom of the page,
-    // so the same text also flashes as a toast inside the scene where the eye is.
-    function setMessage(msg, ok=true, toastMsg=null) {
+    // Keep every message in the dev drawer; only errors and necessary prompts
+    // also appear inside the shop scene.
+    function setMessage(msg, ok=true, toastMsg=null, prompt=false) {
       const el = document.getElementById('messages');
       if (el) {
         el.textContent = msg || '';
@@ -1682,7 +1622,7 @@
       }
       // The drawer keeps the exact machine-readable line; the in-scene plaque
       // speaks the game's language and never shows raw JSON.
-      showToast(toastMsg === null ? msg : toastMsg, ok);
+      if (!ok || prompt) showToast(toastMsg === null ? msg : toastMsg, ok);
     }
 
     // Plain-language rendering of an action, for the in-scene plaque.
@@ -1742,14 +1682,7 @@
       }, ok ? 2600 : 5200);
     }
 
-    /* exp16 W5: which SESSION this page drives.
-       The duel page (/play) serves the same skin against the same payload
-       shapes, but its state lives in `duel_app.py::DuelApp` rather than in
-       `app.py::App`. Rewriting the prefix in ONE place is what lets every
-       call site below -- refresh, apply, compose, undo, reset -- stay exactly
-       as it was. ASSET endpoints (/api/image, /api/icon, /api/font,
-       /api/background) deliberately do not come through here: they are
-       read-only files that both pages share. */
+
     function apiPath(path) {
       const base = (typeof window !== 'undefined' && window.__SAP_API_BASE) || '';
       return base && String(path).startsWith('/api/') ? base + String(path).slice(4) : path;
@@ -1770,24 +1703,7 @@
       return Object.assign({}, body || {}, historyCursor() || {});
     }
 
-    /* A REQUEST THAT NEVER COMPLETED, in the shape a completed one has.
 
-       This is the whole reason the page used to go quiet. `fetch` rejects on a
-       dropped connection, and `res.json()` throws on a body that is not JSON
-       (an empty reply, a proxy's error page). Neither `applyAction` nor any of
-       the click handlers has a `catch`, and there is no `unhandledrejection`
-       listener on this page, so the rejection went nowhere: no toast, no
-       message, no console banner, and the action simply did not happen. Over a
-       lossy tunnel (244 ms RTT, 20% loss) that is a click lost in silence, and
-       on 2026-08-13 it read as a wedged server, because the ONLY component that
-       wraps its own fetch is the value panel in `duel.js` -- so `V: request
-       failed` was the page's single witness to a failure that had just eaten a
-       Roll.
-
-       Returning the failure as an `{ok: false}` envelope rather than throwing
-       means every existing caller's `!payload.ok` branch does the talking, and
-       no caller has to learn a second failure shape. `transport: true` marks the
-       ones where the server's answer is UNKNOWN rather than known-to-be-no. */
     /* The action's own name for a failure sentence ("ROLL did not reach the
        server"). The engine's word, so the message and the history line below
        the scene call the same thing by the same name. */
@@ -2092,11 +2008,7 @@
       return payload.ok;
     }
 
-    /* A composed apply (exp16 W4): one POST, several engine actions, applied
-       all-or-nothing on the server. `legal_actions` never enumerates these --
-       the engine pins BUY_PET to the first empty slot and only permutes
-       occupied slots -- so there is nothing to check with hasLegalAction
-       first; the server answers ok=false naming the op that failed. */
+
     async function applyCompose(compose, successLabel='Applied') {
       const payload = await applyPost(compose, 'that drag');
       if (payload.busy) return false;
@@ -2212,7 +2124,7 @@
       selectedShopIndex = shopIndex;
       selectedTeamIndex = null;
       renderState();
-      setMessage('Select a team pet target for this food, or drag food onto a pet.', true);
+      setMessage('Select a team pet target for this food, or drag food onto a pet.', true, null, true);
     }
 
     async function toggleFreeze(shopIndex) {
@@ -2734,10 +2646,7 @@
       setMessage('No contextual action available.', false);
     });
     bind('btn-end-turn', 'click', async () => {
-      /* exp16 W5: END_TURN is a shop action on the sandbox page and a
-         WHOLE-DUEL step on /play (it stops the AI, resolves one shared
-         battle and advances both sides). The duel page installs its own
-         handler here rather than the skin guessing which page it is on. */
+
       if (typeof window !== 'undefined' && typeof window.__SAP_END_TURN === 'function') {
         await window.__SAP_END_TURN();
         return;
@@ -2748,15 +2657,37 @@
       await requestRecommendation();
     });
     bind('btn-apply-custom', 'click', applyCustomAction);
-    bind('btn-reset', 'click', async () => {
-      const payload = await apiPost('/api/reset', {});
-      setAppState(payload.state, {resetFx: true});
-      selectedShopIndex = null;
-      selectedTeamIndex = null;
-      pendingFoodTargetShopIndex = null;
-      renderState();
-      setMessage('Reset to a fresh random shop state.');
-    });
+    async function resetShopSession() {
+      if (mutationInFlight) {
+        const error = 'An action is still being applied. Please wait before starting again.';
+        setMessage(error, false);
+        return {ok: false, error};
+      }
+      mutationInFlight = 'reset';
+      const buttons = ['btn-reset', 'sandbox-end-again'].map(id => document.getElementById(id)).filter(Boolean);
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        const payload = await apiPost('/api/reset', {});
+        if (await handledTransportFailure(payload, 'Reset')) return payload;
+        if (!payload.ok || !payload.state) {
+          const error = payload.error || 'Could not start a new game.';
+          setMessage(error, false);
+          return {ok: false, error};
+        }
+        setAppState(payload.state, {resetFx: true, actions: [{type: 'RESET'}]});
+        selectedShopIndex = null;
+        selectedTeamIndex = null;
+        pendingFoodTargetShopIndex = null;
+        hideToast();
+        renderState();
+        setMessage('Reset to a fresh random shop state.');
+        return payload;
+      } finally {
+        mutationInFlight = null;
+        buttons.forEach(button => { button.disabled = false; });
+      }
+    }
+    bind('btn-reset', 'click', resetShopSession);
     bind('btn-undo', 'click', async () => {
       const payload = await apiPost('/api/undo', {});
       setAppState(payload.state, {resetFx: true});

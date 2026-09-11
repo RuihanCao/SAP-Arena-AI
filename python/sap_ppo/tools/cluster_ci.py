@@ -1,14 +1,4 @@
-"""Shared cluster-robust bootstrap CI helper for one-turn tempo eval probes.
-
-Factored out of 3 copy-pasted definitions (exp09 W4a Phase C; see
-internal project notesw4_notes/reuse-map.md "FACTOR cluster_ci"):
-an internal analysis script,
-an internal analysis script, and
-an internal analysis script. All three block-bootstrap by
-GAME id (never by raw case) so within-game correlation across turns/cases
-doesn't understate variance -- the frozen-manifest / cluster-CI measurement
-pin (PLAN.md "Measurement pins").
-"""
+"""Shared cluster-robust bootstrap CI helper for one-turn tempo eval probes."""
 
 from __future__ import annotations
 

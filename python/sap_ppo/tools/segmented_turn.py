@@ -1,6 +1,4 @@
-"""exp13's honest-frame SEGMENT LOOP, as one shared implementation.
-
-A2.1 defines a turn under the honest frame as a loop: search from the real
+"""A2.1 defines a turn under the honest frame as a loop: search from the real
 board, commit the chosen chain op by op against that board, stop at the first
 op whose engine transition reports `stochastic_structural=True`, observe the
 real outcome, then re-search from the new state on a fresh imagination stream.
@@ -8,48 +6,9 @@ real outcome, then re-search from the new state on a fresh imagination stream.
 randomness no longer creates a boundary. The cut remains engine-owned and
 never uses an action-type whitelist.
 
-A4 (2026-08-06) tightened that flag from co-occurrence to CAUSATION inside the
-engine: a read-set write the dice did not steer -- a sleeping-pill faint and
-the summon answering it, sharing a step with an unrelated tie draw -- no longer
-raises it. Nothing in this loop changed; it reads the same boolean.
-
-WHY THIS IS A MODULE AND NOT A LOOP INSIDE THE DRIVER. It was one, until
-exp16 W3 needed the same loop to drive the AI side of an interactive duel
-(`tools/play_web/ai_worker.py`). Both exp13's PLAN Amendment A1 and exp16's
-PLAN require exp16 to REUSE this loop rather than write a second one --
-segmentation and stream separation are the silent-error surface of both
-lines, and two copies drift by construction. So the body moved here
-verbatim and `eval_versus_fullgame.py::play_out_game` now calls it; a run of
-that driver is unchanged by the move (the whole suite, including the honest
-frame's own byte-identity pins, is the check).
-
-WHAT EXP16 ADDED, and why none of it changes the driver:
-
-- `decide`: the per-segment decision is a callable instead of a hard-wired
-  `bc.recommend(decision_state)`. The driver passes nothing and gets exactly
-  that (`bc_decide`, exported so a wrapper wraps the real default rather
-  than a copy of it); exp16 passes one that runs a CHUNKED anytime search
-  and can switch to greedy BC for the rest of the turn once the human has
-  ended theirs. This is the "pluggable decide-the-next-segment function"
-  both PLANs name, and exp13 W1's per-segment recorder is the first caller
-  that wraps it purely to observe.
-- `on_committed_op`: a sink for `(segment_index, op, transition)` of every
-  op that actually reached the real board. exp16's smoke asserts that a
-  segment's commit stopped exactly at `stochastic_structural=True`, while
-  preserving `stochastic_reason` as the recorded diagnostic. exp13 W1's
-  recorder reads `transition["state_after"]` off it, which is the object
-  this loop assigns to `board` -- so a segment's last one is both that
-  segment's real result and the next segment's real start. `None` for a
-  plain driver run, whose per-turn records are unchanged.
-- `commit_step`: the engine call used for COMMITTED ops. It defaults to
-  `api.step` (validated) and is deliberately not `api.imagined_step`: the
-  skip lever exp13 W0b' added is for imagined walks only, and the ops this
-  loop commits are real.
-
 Everything else -- the imagined clone per segment, the hook calls, the
 boundary read, the cap, the per-segment record -- is the driver's own code,
-moved.
-"""
+moved."""
 
 from __future__ import annotations
 
@@ -85,8 +44,8 @@ class SegmentedTurn:
     decode_failed: bool = False
     segments: list[dict[str, Any]] | None = None
     segments_capped: bool = False
-    # exp19 (PLAN_W1 step 6): this turn's Cat trigger opportunity counts --
-    # see `cat_trigger_audit`. Recording only; nothing in the loop reads it.
+
+
     cat_trigger_audit: dict[str, int] = field(default_factory=empty_counts)
 
     @property
@@ -114,17 +73,7 @@ def _shop_item_id(board: dict[str, Any], shop_index: Any) -> str | None:
 
 
 def recorded_op(board: dict[str, Any], op: dict[str, Any]) -> dict[str, Any]:
-    """A committed op as it goes into the RECORD, never as it goes to the engine.
-
-    exp19 (PLAN_W1 step 7): `BUY_FOOD` names a shop slot and not a food, so a
-    run's board cannot be replayed from its own recorded chain. W0-D measured
-    the cost of that: 4% of `BUY_PET`s needed repair and 26 games were
-    unrepairable, every one of them a sleeping pill fainting its target, an
-    event the chain cannot see. The id is resolved from the real board the op
-    was committed against and attached to a COPY, so `rec["chain_preview"]`
-    -- the object the recommender returned, which the engine-drift check
-    compares between two heads -- is left untouched.
-    """
+    """A committed op as it goes into the RECORD, never as it goes to the engine."""
     recorded = copy.deepcopy(op)
     if str(op.get("type", "")).strip().upper() == "BUY_FOOD":
         item_id = _shop_item_id(board, op.get("shop_index"))
@@ -134,15 +83,7 @@ def recorded_op(board: dict[str, Any], op: dict[str, Any]) -> dict[str, Any]:
 
 
 def bc_decide(bc: Any) -> Callable[[dict[str, Any], int], dict[str, Any]]:
-    """This loop's DEFAULT per-segment decision, as a value.
-
-    `run_segmented_turn` uses it whenever a caller passes no `decide`, and
-    it is exported so that a caller which needs to OBSERVE the default
-    decision -- exp13 W1's per-segment recorder wraps it -- wraps the real
-    thing instead of writing `bc.recommend(...)` a second time on its own
-    side. One definition of "what the driver decides", so a recorder cannot
-    end up watching a decision the loop does not make.
-    """
+    """This loop's DEFAULT per-segment decision, as a value."""
 
     def _decide(decision_state: dict[str, Any], _segment_index: int) -> dict[str, Any]:
         return bc.recommend(decision_state)
@@ -176,26 +117,10 @@ def run_segmented_turn(
     `state` is the REAL board on play's stream P and is never mutated: the
     loop reassigns `board` to each transition's `state_after`, and the only
     thing the recommender is ever handed under the honest frame is an
-    imagined clone on stream S.
-
-    `start_segment_index` RESUMES the loop mid-turn, from a board that is
-    already `k` structural boundaries into its turn. It defaults to 0, which
-    is every existing caller and is byte-for-byte the loop as it was. It
-    exists because the A1 imagination key is
-    `S(engine_seed, turn, segment_index, sample_r)`, so a caller that resumes
-    at segment `k` and starts the counter at 0 would plan the rest of the
-    turn on segment 0's stream -- the stream the search that CHOSE to cross
-    that boundary already used. `exp13`'s scoring-layer probe
-    (`tools/w1_scoring_layer_probe.py`) is the first such caller: it finishes
-    a turn from a recorded chance-node outcome under the real search policy,
-    and it has to land on the streams the real continuation would have used.
-    The cap stays ABSOLUTE (`segment_index >= max_segments`), so a resumed
-    turn gets the segments its turn has left, not a fresh budget.
-    """
+    imagined clone on stream S."""
     decide_fn = decide if decide is not None else bc_decide(bc)
-    # exp19 (PLAN_W1 step 6): one accountant per TURN, which is the lifetime
-    # of Cat's trigger counter (`engine.reset_ability_counters`). Recording
-    # only: it is fed the same boards and ops the loop already has.
+
+
     audit = CatTriggerAudit()
 
     out = SegmentedTurn(board=state, segments=[] if honest else None)
@@ -233,14 +158,7 @@ def run_segmented_turn(
             segment_seed = None
             decision_state = board
 
-        # exp12 W2 (wave A4): the ONE race scalar no board carries. The V
-        # bypass block needs pre-battle cumulative wins (Vic semantics,
-        # RESULTS_W1 finding 2), and only this loop knows it. Duck-typed
-        # and once per DECISION, so a recommender without the hook is
-        # unaffected and a `--search-scoring vgame` run cannot silently
-        # serve a wrong bypass. `race_wins` is a top-of-turn quantity
-        # (no battle resolves between segments), so every segment of one
-        # turn is correctly served the same value.
+
         if set_race_context is not None:
             set_race_context(wins=race_wins)
 
@@ -321,10 +239,8 @@ def run_segmented_turn(
                     # ...next to what actually reached the real board.
                     # The two differ exactly when a boundary fired.
                     "committed_types": committed_types,
-                    # exp19 (PLAN_W1 step 7): the committed ops themselves,
-                    # with `BUY_FOOD` naming its food. `chain_preview` above
-                    # is the verbatim proposal and stays that way; this is
-                    # the replayable record. See `recorded_op`.
+
+
                     "committed_ops": committed_ops_recorded,
                     "n_committed": len(committed_types),
                     "boundary_reason": boundary_reason,
@@ -335,14 +251,8 @@ def run_segmented_turn(
                     "search_n_dedup": rec.get("search_n_dedup"),
                     "search_chosen_index": rec.get("search_chosen_index"),
                     "search_error": rec.get("search_error"),
-                    # exp22 W3. Absent reads as None, never 0, for the same
-                    # reason `search_n_dedup` does upstream: 0 means "the
-                    # inner search had a choice and kept the greedy
-                    # completion", None means "nothing measured this", and
-                    # reading the second as the first is how a gate reports
-                    # green having measured nothing. The 24-game smoke found
-                    # these keys missing entirely, so the arm that claims to
-                    # deepen had no evidence it deepened.
+
+
                     "search_completion_policy": rec.get("search_completion_policy"),
                     "search_completion_width": rec.get("search_completion_width"),
                     "search_completion_aggregate": rec.get("search_completion_aggregate"),
@@ -380,17 +290,8 @@ def run_segmented_turn(
             break
         segment_index += 1
         if segment_index >= max_segments:
-            # A REAL backstop, not decoration. The W0a' smoke measured
-            # 5.5 segments/turn (max 8) and the dominant boundary is
-            # `ability_randomness` off ordinary BUY_PET/BUY_COMBINE/
-            # BUY_FOOD/SELL -- and SELL GAINS gold, so segments are not
-            # bounded by the turn's gold the way a roll-only frame would
-            # be. Nothing here re-decodes a state it has already seen
-            # this turn either (the visited-state guard is per DECODE,
-            # not across segments), so an oscillating proposer is
-            # bounded by this cap alone. Recorded on the turn rather
-            # than silently absorbed, so if it ever fires it is visible
-            # as a number instead of as a strange short turn.
+
+
             segments_capped = True
             break
 

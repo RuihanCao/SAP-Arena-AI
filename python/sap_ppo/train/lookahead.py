@@ -1,10 +1,4 @@
-"""Deterministic top-k lookahead planner for shop-phase action chains.
-
-This planner is intentionally lightweight:
-- expands only deterministic actions,
-- stops at terminal stochastic actions (`ROLL`, `END_TURN`),
-- uses heuristic scoring plus optional policy-first-action bias.
-"""
+"""Lookahead."""
 
 from __future__ import annotations
 
@@ -235,7 +229,7 @@ def plan_deterministic_chain(
                     continue
                 tr = out.get("transition")
                 if isinstance(tr, dict) and not bool(tr.get("deterministic", False)):
-                    # Deterministic planner does not continue past stochastic branches.
+
                     leaves.append(
                         {
                             "env": child_env,

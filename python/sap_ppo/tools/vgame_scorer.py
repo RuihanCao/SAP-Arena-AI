@@ -1,17 +1,8 @@
-"""The LEARNED search leaf: `--search-scoring vgame` (exp12 W2, run in A4).
-
-Spec: PLAN.md W2 ("`--search-scoring vgame` in SearchRecommender: one batched
-V forward over deduped end boards, score = (1-blend)*V + blend*myopic -
-pessimism*ensemble_std; never-raise contract kept; turn-1 skip kept for
-comparability") and the A4 amendment that deploys it.
-
-This module owns everything the leaf needs that `SearchRecommender` must not
+"""This module owns everything the leaf needs that `SearchRecommender` must not
 grow: the checkpoint load, the encoder, the bypass block and the score
 formula. `SearchRecommender` only ever calls `score_boards`, so it keeps its
 torch-free import surface and this file is the single place the SERVE
 CONTRACT lives.
-
-## The serve contract (RESULTS_W1 findings 9, 11 and 14, enforced here)
 
 1. The encoder input is the candidate's END BOARD as-is, which is exactly
    what A2 stored (`build_teacher_distill_dataset.py` encodes the recorded
@@ -37,34 +28,7 @@ CONTRACT lives.
 
 ## What V means, and why that is checked rather than assumed
 
-A route-a artifact (`metadata["target"] == "teacher_score"`) does NOT emit a
-win probability: its `p_win` head carries the AFFINELY SQUASHED teacher
-score, so the leaf value is `unsquash_score(p_win)` and lives on the
-teacher's own `[-0.06, 1.06]` scale. An outcome-trained artifact (W1/W1'c)
-emits a real probability and is used as-is. An exp13 W1c artifact
-(`metadata["target"] == "bellman_trophies"`) carries a BOUNDED TROPHY VALUE,
-so the leaf is `10 * p_win` on `[0, 10]` -- `PLAN_W1.md` §Operator changed the
-head's link when the reward became expected trophies. An exp22 W1 artifact
-(`metadata["target"] == "mc8_leafmap_trophies"`) is the fourth: its head was
-CARRIED from V0 rather than retrained, so its logit still speaks the squashed
-teacher score, and a FROZEN monotone leaf map carried in the artifact's own
-metadata lifts that onto trophies. The map is applied per board, before any
-averaging, because `f(mean) != mean(f)` and that difference was measured to
-flip 15.61% of argmaxes. The artifact says which, this module branches on it,
-and `describe()` reports the branch it took.
-
-The four scales are an order of magnitude apart, and every one of them is a
-plausible small number, so an artifact whose target string this module does
-not recognise is REFUSED at construction rather than served on a default.
-Serving a W1c head as if it were a probability would put a V1 arena arm on a
-tenth of its own scale and the paired gate would read as a catastrophic
-regression that never happened.
-
 ## The blend and the pessimism knobs
-
-`score = (1 - blend) * V + blend * myopic - pessimism * ensemble_std`, the
-formula frozen in W2, with both knobs defaulting to 0 so the deployed arm is
-a pure V leaf.
 
 Two properties of that formula are stated rather than smoothed over. First,
 `V` and `myopic` are on DIFFERENT scales for a route-a artifact (teacher
@@ -73,14 +37,7 @@ score in [-0.06, 1.06] against `(playerWins - opponentWins) / ksim` in
 implemented as written and this is documented, not silently rescaled.
 Second, `ensemble_std` is only defined for an ensemble, so `pessimism > 0`
 with a single member is rejected at CONSTRUCTION rather than being a no-op
-that quietly turns a pessimism run into a plain run.
-
-Turning `blend` on is also what makes the stage-1 myopic oracle calls
-necessary at all: at `blend == 0` the leaf never reads them, so
-`SearchRecommender` skips them entirely, which is where the cost saving the
-W2 rule measures actually comes from. `needs_myopic` is how that is
-communicated.
-"""
+that quietly turns a pessimism run into a plain run."""
 
 from __future__ import annotations
 
@@ -100,12 +57,8 @@ from .._artifact_defaults import VGAME_EXTRACTOR as DEFAULT_EXTRACTOR  # noqa: E
 TARGET_TEACHER_SCORE = "teacher_score"
 TARGET_GAME_OUTCOME = "game_outcome"
 TARGET_BELLMAN_TROPHIES = "bellman_trophies"
-# exp22 W1: a head CARRIED from V0 and fine-tuned on MC8. Its logit still
-# speaks V0's squashed teacher score, and a frozen monotone leaf map lifts
-# that onto trophies (`19-trophy-levers/PLAN_W1.md` §3d case 2). It is a
-# distinct target string precisely because serving it as `bellman_trophies`
-# would apply `unsquash_trophies` to a teacher score, which is off by the
-# whole map and is exactly the silent units error this table exists to stop.
+
+
 TARGET_MC8_LEAFMAP = "mc8_leafmap_trophies"
 
 # `metadata["target"]` -> which map turns the head's probability into a leaf
@@ -178,10 +131,8 @@ class VGameLeafScorer:
                 f"vgame_scorer_pessimism_without_ensemble:members={len(self.models)}:"
                 f"pessimism={self.pessimism} (ensemble_std is identically 0 with one "
                 f"member, so the knob would be a silent no-op)")
-        # Two ways in, one field out. `value_kind` is the current spelling and
-        # the boolean is what every pre-W1c caller passes; giving both is only
-        # allowed when they agree, so a caller cannot half-migrate and end up
-        # serving on a scale it did not ask for.
+
+
         if value_kind is None and value_is_squashed_teacher_score is None:
             raise ValueError("vgame_scorer_value_kind_unset")
         derived = (
@@ -203,7 +154,7 @@ class VGameLeafScorer:
         if self.value_kind in VALUE_KINDS_NEEDING_LEAF_MAP and self.leaf_map is None:
             raise ValueError(
                 f"vgame_scorer_missing_leaf_map:{self.value_kind}. The artifact's "
-                "metadata must carry a 'leaf_map' block; see exp22_w1_leafmap.")
+                "metadata must carry a compatible 'leaf_map' block.")
         if self.value_kind not in VALUE_KINDS_NEEDING_LEAF_MAP and self.leaf_map is not None:
             raise ValueError(
                 f"vgame_scorer_unexpected_leaf_map:{self.value_kind}")
@@ -400,7 +351,7 @@ class VGameLeafScorer:
         if self.value_kind == VALUE_KIND_LEAFMAP:
             from ..train.vdistill import unsquash_score
 
-            # V0's units first, then the frozen monotone map. The order is the
+            # Teacher-score units first, then the frozen monotone map. The order is the
             # arm's definition, not an implementation choice: the map was
             # fitted from `v0_score` to the label, so it must be handed a
             # `v0_score`. Applied PER BOARD, before any averaging the search
@@ -415,8 +366,7 @@ class VGameLeafScorer:
     # -- telemetry ---------------------------------------------------------
 
     def describe(self) -> dict[str, Any]:
-        """The block every A4 report echoes, so a number says on its face
-        which weights and which knobs produced it."""
+        """Model metadata and the settings used to produce value scores."""
         out = dict(self.meta)
         out.update({
             "blend": self.blend,

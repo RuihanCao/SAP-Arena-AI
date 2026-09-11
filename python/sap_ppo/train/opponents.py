@@ -278,27 +278,7 @@ class RandomOpponentProvider:
 
 @dataclass
 class SelfPlayPoolProvider:
-    """Self-play pool provider (same by-turn snapshot shape, distinct source tag).
-
-    exp10 W5.W1: rows are expected to tag their OWN origin via a `source` key
-    (e.g. "self_play", "human_train", "model_pool" -- see
-    `tools/compose_round_pool.py`, which composes a round's training pool out
-    of several such tagged source pools so per-source battle-rate telemetry
-    -- `train/train_ppo.py::_accumulate_battle_event` -- can tell them apart).
-    `sample()` below only fills in "self_play" as a FALLBACK (`setdefault`)
-    for a row that has no tag of its own; it never overwrites an existing
-    tag. Note `load_snapshot` (`snapshots.py::_normalize_rows`) already
-    defaults an untagged row's `source` to "snapshot" at load time (same
-    default `ReplaySnapshotProvider`/`StaticTurnOpponentProvider` above use),
-    so by the time a row reaches this method it typically already carries
-    SOME source -- either the writer's own tag or "snapshot" -- and this
-    method's own "self_play" fallback rarely fires in practice for a
-    file-backed pool. See `test_train_opponents_curriculum.py`'s
-    `test_row_untagged_at_write_time_surfaces_as_snapshot_not_self_play`
-    (the common, file-backed path) and
-    `test_sample_setdefault_fallback_fires_when_by_turn_bypasses_load_snapshot`
-    (the fallback actually firing) for both observed paths.
-    """
+    """Self-play pool provider (same by-turn snapshot shape, distinct source tag)."""
 
     pool_path: Path
     seed: int | None = None
@@ -342,11 +322,8 @@ class SelfPlayPoolProvider:
         picked = copy.deepcopy(self._rng.choice(rows))
         picked.setdefault("ok", True)
         picked.setdefault("error", None)
-        # exp10 W5.W1: was an unconditional overwrite (`picked["source"] =
-        # "self_play"`), which clobbered every row's own origin tag. A round
-        # pool composed from several tagged sources (see class docstring)
-        # needs each row's tag to survive sampling -- setdefault only backstops
-        # a row that truly has none.
+
+
         picked.setdefault("source", "self_play")
         return picked
 

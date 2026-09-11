@@ -1,17 +1,10 @@
-/* exp16 W5: the duel page's own chrome.
 
-   `app.css` owns the shop scene and every card inside it; this file adds only
-   what a duel needs around it -- the score bar, the opponent lane, the
-   thinking badge, the per-turn table and the end screen -- in the same visual
-   language (pure black keylines, parchment panels, the SAPUI face). Nothing
-   here restyles a `.card`, a lane or a slab, so the skin the shop page is
-   judged on is literally the same skin here. */
 
 .duel-body {
   background: var(--footer);
 }
 
-/* W6c2 scoped light replay override. */
+
 .replay-body { --replay-bg:#f5f0e6; --replay-paper:#fffdf8; --replay-ink:#26343a; --replay-muted:#65747a; --replay-line:#d8cdbb; --replay-accent:#cf6d36; min-height:100vh; color:var(--replay-ink); background:linear-gradient(145deg,#faf7f0,#eee4d3); }
 .replay-body { background-color:#f5f0e6; }
 .replay-body .menu-title { color:var(--replay-ink); }
@@ -38,8 +31,7 @@
 .replay-body .replay-turn-jump { border:1px solid #bcae99; border-radius:11px; background:#fff; color:var(--replay-ink); padding:8px 10px; font:inherit; font-size:13px; }
 .replay-body.is-human-actions-hidden .replay-side[data-side="Human"] { display:none; }
 .replay-body.is-ai-actions-hidden .replay-side[data-side="AI"] { display:none; }
-/* exp16 replay UI: one <details> per skipped block, never one page-wide
-   expand-all, so opening a board does not also open the shop beside it. */
+
 .replay-body .replay-fold { margin-top:10px; border:1px dashed var(--replay-line); border-radius:9px; background:#fffdf8; padding:6px 10px; }
 .replay-body .replay-fold>summary { cursor:pointer; color:var(--replay-muted); font-size:12px; font-weight:800; }
 .replay-body .replay-fold[open]>summary { margin-bottom:4px; }
@@ -157,13 +149,7 @@
 .duel-field input { width: 76px; cursor: text; }
 .duel-field.checkbox { gap: 5px; color: var(--dev-ink); }
 .duel-btn { text-decoration: none; display: inline-block; }
-/* `display: inline-block` above outranks the user agent's `[hidden] {display:
-   none}`, so every `.duel-btn` carrying the `hidden` attribute showed anyway.
-   Found on 2026-08-20 on the settings card's "Keep playing this one", which
-   appeared with no game to keep, and it was already true of
-   `#duel-render-link`: the calculator link sat there pointing at `#` until a
-   battle had resolved. One rule fixes both, and any `.duel-btn` added later
-   with `hidden`. */
+
 .duel-btn[hidden] { display: none; }
 .duel-btn:hover { background: var(--gold); }
 .duel-btn.primary { background: var(--orange); color: #fff; }
@@ -268,10 +254,7 @@
   min-height: 168px;
   display: flex;
   align-items: flex-end;
-  /* The attack/health plates hang 28px BELOW the slab (`.badges` in app.css),
-     and the panel's own bottom padding is 12px, so a board drawn flush with
-     this box pokes its hearts out through the panel's keyline. Found on
-     W5.1's own screenshot; 22px + 12px clears it. */
+
   padding-bottom: 22px;
 }
 .duel-board-row {
@@ -282,21 +265,7 @@
 /* the opponent's cards are for looking at, not for dragging */
 .card.is-readonly { cursor: default; }
 
-/* ---- the enemy's own board (W5.1) ----
-   The sprite already faces the right way with no rule at all: the pack draws
-   pets facing left, and `spriteClass(..., 'enemy')` in `app.js` simply leaves
-   off the `mirror-x` the human's board wears. What does need a rule is the
-   level plaque, pinned to the card's left edge in `app.css`, which mirrors
-   with the pet to the top-right corner.
 
-   Two things are deliberately NOT mirrored:
-   - `.badges` (attack, then health) stays centred and in that order. The real
-     client draws attack left of health on BOTH sides -- exp15
-     `strips_final/strip_00`, REAL row, where the enemy worm reads 1 then 0
-     exactly like the player's pet does.
-   - `.equip-row`, the held-food chip, keeps the same shoulder. That frame has
-     no equipped pet in it, so there is nothing to copy; whether it swaps
-     shoulders is one of the two calls left to Ruihan on the screenshots. */
 .card.is-enemy .lvl-plaque {
   left: auto;
   right: 0;
@@ -321,10 +290,7 @@
   text-align: center;
   padding: 0 12px;
 }
-/* W5.1: the curtain belongs to ONE state, `unseen`, and a game leaves it for
-   good at its first battle. `revealed` and `last-seen` show the same board;
-   what separates them is the label in the head and the result chip, which the
-   dwell timer stops highlighting. */
+
 .duel-opponent[data-phase="unseen"] .duel-board-row { visibility: hidden; }
 .duel-opponent:not([data-phase="unseen"]) .duel-curtain { display: none; }
 .duel-seen-note {
@@ -394,9 +360,7 @@
 .duel-log-row[data-outcome="failed"] .verdict { color: var(--hp); }
 .duel-log-table .widths { color: var(--dev-muted); }
 
-/* exp16 Amendment 6: the per-turn search line on a replay turn card. Its own
-   light-theme rules because `.replay-body` is a separate palette from the
-   duel page and the PLAN pins its values. */
+
 .replay-body .replay-search-row {
   display: flex;
   flex-wrap: wrap;
@@ -416,9 +380,7 @@
 }
 
 /* =========================== the end screen =========================== */
-/* ======================= the settings card =======================
-   Same overlay shell as the end screen (Amendment 6), because they are the
-   two moments the page stops being a board and asks for a decision. */
+
 .duel-setup {
   position: fixed;
   inset: 0;
@@ -454,7 +416,7 @@
 }
 .duel-setup-field {
   display: grid;
-  grid-template-columns: 170px 90px;
+  grid-template-columns: 170px minmax(190px, 1fr);
   gap: 4px 10px;
   align-items: center;
   margin-bottom: 14px;
@@ -571,6 +533,13 @@
   margin-top: 18px;
 }
 
+.sandbox-end { overflow-y: auto; }
+.sandbox-end .duel-end-card { max-width: 560px; }
+.sandbox-end .duel-end-boards { grid-template-columns: minmax(0, 1fr); }
+.sandbox-end .duel-end-board { width: 350px; max-width: 100%; margin: 0 auto; overflow: hidden; }
+.sandbox-end .duel-end-actions { flex-wrap: wrap; }
+.sandbox-end a[hidden] { display: none; }
+
 @media (max-width: 900px) {
   .duel-end-boards { grid-template-columns: 1fr; }
 }
@@ -647,13 +616,7 @@
 }
 .menu-note a:hover { color: var(--orange); }
 
-/* ============ exp16 show-value: the agent's valuation of your board ========
-   The visual rule here is one rule: the sentence is never smaller than the
-   number is loud. `.duel-value-number` is the biggest type on the panel and
-   `.duel-value-meaning` sits directly under it at body size with no ellipsis
-   and no clamp -- a mid-turn or per-action figure means "if you take this and
-   then let BC finish the turn for you", and a layout that lets that line be
-   truncated or scrolled away is the same defect as not sending it. */
+
 .duel-value-panel { display: grid; gap: 10px; }
 .duel-value-head {
   display: flex;
@@ -754,13 +717,7 @@
 .duel-value-logrow[data-clamped="1"] { border-bottom-style: solid; }
 .duel-value-clamp { color: var(--orange-ink); font-weight: 700; }
 
-/* exp16 show-value, replayed. One row per turn card carrying what V thought of
-   both boards at that end of turn, plus what was actually taken from there. The
-   short meaning line is not decoration: acceptance 2 of DESIGN_show_value.md
-   says a number does not reach the screen without the sentence that says what
-   it is, and thirteen copies of the full 270-character sentence down a page is
-   a way of not saying it, so the full text heads the game once and lives in
-   each row's title. */
+
 .replay-body .replay-value-legend { margin:12px 0; border:1px solid var(--replay-line); border-left:4px solid #6a8fb0; border-radius:12px; background:#f4f8fb; padding:11px 13px; display:grid; gap:6px; }
 .replay-body .replay-value-legend b { color:var(--replay-ink); }
 .replay-body .replay-value-legend p { margin:0; font-size:13px; line-height:1.55; color:#4a5b68; }
@@ -772,3 +729,10 @@
 .replay-body .replay-value-clamp { color:#8c6d2f; margin-right:2px; }
 .replay-body .replay-value-meaning { flex-basis:100%; color:var(--replay-muted); font-size:12px; }
 .replay-body .replay-value-error { flex-basis:100%; color:#8b3c34; font-size:12px; }
+.duel-setup-field[hidden],
+#duel-time-readout[hidden],
+#duel-render-image[hidden],
+#duel-render-placeholder[hidden],
+#duel-value-panel[hidden] {
+  display: none;
+}

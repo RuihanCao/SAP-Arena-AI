@@ -32,11 +32,7 @@ GENERATED_PET_NAME_IDS: dict[str, str] = {
     "pet-honey-bee": "Bee",
 }
 
-# Pets absent from the extracted catalog that carry real shop stats/tier (unlike
-# the spawn tokens above, which only need a name mapping). Sloth (MinionEnum 71)
-# is the 1e-4 easter-egg Turtle pet: 1/1, tier 1, no ability. SAP-Calculator
-# tags it with an empty Packs list so the extractor drops it, but it appears in
-# real Turtle games (decoder emits enu 71). exp09 W3b; undecodable-actions.md #2.
+
 GENERATED_PETS_FULL: dict[str, dict[str, Any]] = {
     "pet-sloth": {"name_id": "Sloth", "tier": 1, "attack": 1, "health": 1},
 }

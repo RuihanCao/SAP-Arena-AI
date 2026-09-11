@@ -1,10 +1,4 @@
-"""exp13 W1c: the bounded-trophy value head, its objective and its metrics.
-
-`PLAN_W1.md` §"Why the reward is expected trophies and not completion
-probability" changes three things about the trained V and leaves everything
-else alone. This module is those three things, and nothing else:
-
-1. THE LINK. "The trained head's link changes from the `[-0.06, 1.06]`
+"""1. THE LINK. "The trained head's link changes from the `[-0.06, 1.06]`
    sigmoid to a bounded regression on `[0, 10]`." The head itself is
    unchanged -- `VGameHeads` still emits one logit -- so the change lives
    entirely in what that logit MEANS:
@@ -17,42 +11,12 @@ else alone. This module is those three things, and nothing else:
    the serve path byte-identical; a prediction also cannot leave the target's
    structural range, which is the property `B_1`'s own arithmetic has.
 
-2. THE RANKING TERM, WHICH IS TWO-LEVEL HERE AND WAS ONE-LEVEL IN exp12.
-   "The within-group pairwise ranking term is unchanged in form, because
-   per-candidate targets still exist." In exp12 route a a GROUP was a
-   decision and its members were candidates, so `vdistill.pairwise_rank_loss`
-   ranked rows directly. In exp13 a row is a COMPLETION AFTERSTATE, a prefix
-   group owns k of them, and §Data unit and schema says "prefix-level ranking
-   uses the mean prediction and mean target across that prefix's completion
-   boards". So the pairwise term is applied one level up, over prefix groups
-   inside a decision, and `vdistill.pairwise_rank_loss` is reused verbatim on
-   the aggregated tensors -- unchanged in form, moved up a level.
-
-   ON WHICH QUANTITY THE MEAN IS TAKEN, an ambiguity the plan does not
-   resolve. "Mean prediction" could be the mean logit or the mean predicted
-   trophies, and the two differ because the sigmoid is not affine. The rank
-   loss here takes the mean LOGIT, because RankNet's `softplus(-sign(dt)*dz)`
-   is scale-free in `z` and the trophy scale would put a typical pair
-   difference deep in the linear tail of the softplus, which is a different
-   loss and not "unchanged in form". Every REPORTED quantity -- top-1
-   agreement, regret, calibration -- uses the mean predicted TROPHIES, which
-   is what a reader means by a prefix's predicted value. Both are recorded
-   next to each other by `prefix_frame`, so the choice is inspectable rather
-   than buried.
-
 3. THE SELECTOR'S CURRENCY. "The arm selector's third tie-break changes from
    MC8-anchor top-choice regret to MC8-anchor top-1 agreement, because
    regret's scale moved with the head." `prefix_group_metrics` therefore
    takes the reference target as an argument, so the same function computes
    the operator's own top-1 agreement and the MC8-anchor one without a second
-   implementation that could drift from the first.
-
-WHAT IS DELIBERATELY NOT HERE. No training loop, no data loading and no
-selector policy: `tools/run_exp13_w1_train.py` owns those. This file is pure
-tensor and array math so the ordering claims above can be tested without a
-checkpoint, an encoder or a battle process, the same split
-`w1_bellman_targets.py` keeps from `w1_arena_frame.py`.
-"""
+   implementation that could drift from the first."""
 
 from __future__ import annotations
 
@@ -65,19 +29,11 @@ import torch.nn as nn
 from .vdistill import pairwise_rank_loss, top1_chance_with_ties
 
 
-# The operator's structural range (`PLAN_W1.md` §Operator: 10 trophies
-# completes the game, no discount, so a return-to-go cannot leave [0, 10]).
-# NOT fitted to data, for the same reason `vdistill.SCORE_MIN` is not: an
-# empirical range would move between waves and silently redefine what a
-# trained artifact means.
 TROPHY_MIN = 0.0
 TROPHY_MAX = 10.0
 TROPHY_SPAN = TROPHY_MAX - TROPHY_MIN
 
-# `metadata["target"]` of an artifact trained here. `tools/vgame_scorer.py`
-# branches on it to pick the head-output-to-leaf-value map, so a W1c artifact
-# served through an older scorer fails loudly instead of serving a probability
-# where a trophy count is expected.
+
 TARGET_BELLMAN_TROPHIES = "bellman_trophies"
 
 LINK_LOGIT = "logit"
@@ -103,16 +59,7 @@ def predicted_trophies(logits: th.Tensor) -> th.Tensor:
 def bounded_value_loss(
     logits: th.Tensor, target_trophies: th.Tensor, *, link: str = LINK_LOGIT
 ) -> th.Tensor:
-    """The per-row regression term, in trophies on both links.
-
-    `LINK_LOGIT` is soft-target cross entropy on `target/10`, the same
-    distillation loss `vdistill.distill_loss` uses and for the same reason:
-    the gradient does not vanish at the boundary, and the target mass here
-    sits near one (`RESULTS_W1a3.md` pins mean trophies at about 4 with the
-    bulk of games dying at 0 lives, so returns-to-go pile up at the low end).
-    `LINK_MSE` keeps plain squared error on the trophy scale available, so
-    the choice stays falsifiable instead of merely argued.
-    """
+    """The per-row regression term, in trophies on both links."""
     target = target_trophies.float()
     if link == LINK_LOGIT:
         y = th.clamp(squash_trophies(target), 0.0, 1.0)
@@ -190,12 +137,6 @@ def prefix_group_metrics(
 ) -> dict[str, Any]:
     """Top-1 agreement, regret and Spearman over PREFIX GROUPS in a decision.
 
-    `prefix_reference` is a parameter and not a fixed column so the operator's
-    own target and the MC8 anchor go through one implementation: the arm
-    selector reads the first and its third tie-break reads the second
-    (`PLAN_W1.md` §Model training and selection), and two implementations of
-    "top-1 agreement" would be two chances to disagree.
-
     Tie convention is `vdistill.group_metrics`'s, unchanged: a pick agrees
     when ITS reference value equals the decision's maximum, because a tie
     means the reference is indifferent and a model is not wrong to break it.
@@ -212,8 +153,7 @@ def prefix_group_metrics(
     `tie_tolerance`, and the exact agreement is reported alongside as
     `top1_agreement_exact` so a tolerant number never hides the strict one.
     Callers that grade a MODEL against a LABEL must leave it at 0.0: there the
-    two quantities are genuinely different and a near-tie is a real near-tie.
-    """
+    two quantities are genuinely different and a near-tie is a real near-tie."""
     pred = np.asarray(prefix_pred, dtype=np.float64).ravel()
     ref = np.asarray(prefix_reference, dtype=np.float64).ravel()
     starts = np.asarray(decision_start, dtype=np.int64).ravel()
@@ -282,14 +222,7 @@ def prefix_group_metrics(
 
 
 def regression_metrics(pred_trophies: np.ndarray, target_trophies: np.ndarray) -> dict[str, Any]:
-    """Held-out regression error ON THE BOUNDED TROPHY SCALE.
-
-    This is the arm selector's FIRST tie-break, so it is denominated in the
-    units the plan names ("median held-out regression error on the bounded
-    trophy scale") and not in the link's internal [0, 1] coordinates. The
-    median absolute error is the selector's quantity; the mean and the RMSE
-    are reported beside it because a median alone hides a tail.
-    """
+    """Held-out regression error ON THE BOUNDED TROPHY SCALE."""
     pred = np.asarray(pred_trophies, dtype=np.float64).ravel()
     target = np.asarray(target_trophies, dtype=np.float64).ravel()
     if pred.size != target.size:
@@ -308,15 +241,7 @@ def regression_metrics(pred_trophies: np.ndarray, target_trophies: np.ndarray) -
 
 
 def saturation_metrics(pred_trophies: np.ndarray, *, edge: float = 0.05) -> dict[str, Any]:
-    """Where the bounded head's mass sits, and how much of it is at the rails.
-
-    `PLAN_W1.md` §Model training and selection lists "prediction histograms
-    and fraction at the bounds of the trophy scale" as mandatory red-flag
-    telemetry and Checkpoint A has a bar on unexplained saturation, so this is
-    computed by the trainer rather than reconstructed later from a checkpoint.
-    `edge` is a fraction of the span: the default counts a prediction within
-    0.5 trophies of a rail as sitting on it.
-    """
+    """Where the bounded head's mass sits, and how much of it is at the rails."""
     pred = np.asarray(pred_trophies, dtype=np.float64).ravel()
     if pred.size == 0:
         return {"n_rows": 0}

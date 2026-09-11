@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>SAP-Arena Duel</title>
+  <title>SAP-Arena-AI Play</title>
   <link rel="stylesheet" href="/static/app.css" />
   <link rel="stylesheet" href="/static/duel.css" />
   <script>
@@ -29,13 +29,9 @@
         <span class="duel-score ai" id="duel-score-ai">AI <b id="duel-ai-lives">-</b> lives &middot; <b id="duel-ai-wins">0</b> wins</span>
       </div>
       <div class="duel-controls">
-        <!-- Amendment 6: both knobs are set on the settings card before a game
-             and are fixed for its whole length, so this bar READS them and no
-             longer offers to change them. A game that could change its own
-             clock or deepening halfway could not be filed under one setting,
-             and the archive records exactly one per game. -->
+
         <span class="duel-field readout" id="duel-gear-readout" title="fixed for this game, set before it started">
-          clock <b id="duel-clock-readout">-</b>s &middot; width <b id="duel-width-readout">-</b> &middot; deepening <b id="duel-deepen-readout">-</b>
+          <span id="duel-mode-readout">-</span> &middot; <span id="duel-time-readout"><b id="duel-clock-readout">-</b>s &middot; </span>root <b id="duel-width-readout">72</b> &middot; w=<b id="duel-deepen-readout">4</b>
         </span>
         <button id="duel-new-game" class="duel-btn" type="button">New game</button>
       </div>
@@ -44,9 +40,7 @@
     <!-- the loud failure line: `AI failed turn N: <code>` -->
     <div class="duel-banner" id="duel-banner" hidden></div>
 
-    <!-- exp16: the page is pointed at a server that has RESTARTED. Its own
-         element, not the banner above, because the banner is per-turn and this
-         outlives every turn: nothing on this page is live any more. -->
+
     <div class="duel-stale" id="duel-stale-server" hidden></div>
 
     <!-- ===================== the opponent lane ===================== -->
@@ -58,10 +52,7 @@
           <span id="ai-badge-text">idle</span>
         </span>
         <span class="duel-searchline" id="ai-search-line">no turn played yet</span>
-        <!-- exp16: whether the AI is DEEPENING behind a chance node, and how
-             hard. A separate element rather than more words on the line above,
-             because `gate_duel.py` asserts that line character for character
-             against the server's own record. -->
+
         <span class="duel-deepenline" id="ai-deepen-line">deepening: unknown</span>
         <!-- which turn's board is standing here; `duel.js` owns the wording -->
         <span class="duel-seen-note" id="ai-seen-note"></span>
@@ -75,9 +66,7 @@
       </div>
     </div>
 
-    <!-- ===================== the shop scene (exp14 skin) =====================
-         Identical ids and classes to the sandbox page: `static/app.js` renders
-         the human's own board and shop here with no idea it is in a duel. -->
+
     <div class="stage" id="stage">
     <div class="scene" id="scene">
       <div class="hud">
@@ -133,16 +122,9 @@
     </div>
     </div>
 
-    <!-- ============ what the agent thinks of the board you built ============
-         exp16 show-value. The number and the sentence under it are written
-         together by `duel.js::paintValue` from ONE server response, and the
-         number falls back to "--" when the sentence is missing. That is not
-         defensive coding for its own sake: a mid-turn or per-action number
-         means "if you take this and then let BC finish the turn for you, the
-         resulting board is worth this much", which is NOT the value of the
-         action, and a screen that shows the figure without saying so misleads.
-         DESIGN_show_value.md section 3 calls the label part of the feature. -->
-    <div class="panel duel-value-panel" id="duel-value-panel" hidden>
+
+    <details class="panel duel-value-panel" id="duel-value-panel" hidden>
+      <summary>Board value</summary>
       <div class="duel-value-head">
         <h3>What the AI thinks of your board</h3>
         <span class="tiny duel-value-provenance" id="duel-value-provenance"></span>
@@ -172,7 +154,7 @@
         </div>
         <div id="duel-value-log" class="duel-value-log"></div>
       </div>
-    </div>
+    </details>
 
     <!-- ===================== the live battle render ===================== -->
     <div class="panel duel-render-panel" id="duel-render-card" data-status="idle">
@@ -192,16 +174,20 @@
     </div>
 
     <!-- ===================== the per-turn record ===================== -->
-    <div class="panel duel-log-panel">
-      <h3>How hard the AI thought</h3>
+    <details class="panel duel-log-panel">
+      <summary>Search details</summary>
       <div class="duel-log-hint">
-        A turn is a chain of SEGMENTS: the AI re-searches after every action the
-        engine calls structurally random. Each segment searches until its own
-        clock slice; a "d" width is the ranked minimum used only after the fixed
-        AI turn clock is exhausted.
+        The agent searches again after observing a random outcome. Each row shows
+        the actual search work and time used during that turn.
       </div>
       <div id="duel-log" class="duel-log"><span class="tiny">No turn has resolved yet.</span></div>
-    </div>
+    </details>
+    <details class="panel devzone drawer" id="drawer-dev">
+      <summary>Actions and diagnostics</summary>
+      <div id="messages" class="messages"></div>
+      <div id="build-line" class="tiny"></div>
+      <div id="history" class="history"></div>
+    </details>
   </div>
 
   <!-- ===================== the settings card =====================
@@ -213,65 +199,22 @@
       <p class="duel-setup-sub">Settings apply for the whole game. The replay records the configured and realised budgets.</p>
 
       <label class="duel-setup-field">
-        <span class="duel-setup-label">Deepening width</span>
-        <input id="setup-deepen" type="number" min="0" max="64" step="1" value="4" />
-        <span class="duel-setup-help">
-          How many different ways the AI imagines finishing the turn behind each
-          point the game rolls dice, before its scorer picks one.
-          <b>0 turns it off</b>: it imagines one, the way it always used to.
-          Higher costs more work per chance sample. Under grow k this leaves
-          less time for extra samples and can increase deadline truncation;
-          fixed-all instead takes longer to finish its requested work.
-        </span>
-      </label>
-
-      <label class="duel-setup-field">
-        <span class="duel-setup-label">AI turn clock</span>
-        <input id="setup-budget" type="number" min="1" max="600" step="1" value="105" />
-        <span class="duel-setup-help">
-          Target wall-clock seconds for grow k or laboratory width growth.
-          Fixed-all ignores this clock. Checks occur between work units, so
-          it is not a hard timeout. The AI thinks while you shop.
-        </span>
-      </label>
-
-      <label class="duel-setup-field">
-        <span class="duel-setup-label">Search budget mode</span>
+        <span class="duel-setup-label">Search mode</span>
         <select id="setup-gear">
-          <option value="resample-clock">grow k (default)</option>
-          <option value="measured">fixed-all</option>
-          <optgroup label="Advanced / laboratory">
-            <option value="full-clock">grow root width</option>
-          </optgroup>
+          <option value="grow-k">Grow k (default)</option>
+          <option value="fixed-all">Fixed-all</option>
         </select>
         <span class="duel-setup-help">
-          <b>Grow k</b> starts at the configured sample count (default 12),
-          keeping root proposals (default 72) and completion width (default 4)
-          fixed, then adds one chance sample to every stochastic group at once.
-          Only complete equal-k rounds are committed. Each sample takes the
-          maximum V over its completions; group scores average those maxima.
-          <b>Fixed-all</b> uses the same initial budget and stops after root
-          proposals, without a wall-clock stop.
-          Grow k checks time between work units: a turn deadline can truncate
-          root proposals, and an in-flight sample round can overrun the clock.
-          The turn log shows realised width and k; a timed duel is not the
-          arena benchmark. <b>Grow root width</b> is a laboratory alternative
-          whose proposal count depends on machine speed.
+          Fixed-all uses the evaluation search configuration: 72 root proposals,
+          w=4 continuations, and k=12 chance samples.
+          Grow k keeps the same root and w, and uses additional time to increase k.
         </span>
       </label>
 
-      <label class="duel-setup-field" id="setup-width-row">
-        <span class="duel-setup-label">Segment width</span>
-        <input id="setup-width" type="number" min="1" max="4096" step="1" value="72" />
-        <span class="duel-setup-help">
-          How many whole action chains the AI considers per segment, and it
-          really plays one of them. Used by both fixed modes; ignored by
-          <b>grow root width</b>, which decides the count itself.
-          72 is what the published baselines ran.
-          <b>This is a different knob from deepening width above</b> and neither
-          switches the other off: this one is how many paths, that one is how
-          many endings imagined per path.
-        </span>
+      <label class="duel-setup-field" id="setup-budget-row">
+        <span class="duel-setup-label">AI turn time (seconds)</span>
+        <input id="setup-budget" type="number" min="1" max="600" step="1" value="105" />
+        <span class="duel-setup-help">Time available for Grow k. The agent thinks while you shop.</span>
       </label>
 
       <div class="duel-setup-error" id="duel-setup-error" hidden></div>

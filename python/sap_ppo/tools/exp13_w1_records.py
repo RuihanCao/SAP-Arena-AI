@@ -1,12 +1,9 @@
-"""Per-segment exp13 W1 records with play-independent label selection.
-
-`SegmentRecorder` is the collection side: it hangs off `SegmentedTurn`'s
+"""`SegmentRecorder` is the collection side: it hangs off `SegmentedTurn`'s
 `decide` / `on_committed_op` hooks and emits one raw row per real segment.
 `build_segment_record` is the schema side: it turns one raw row into the
 persisted record, adding the label-group selection. They are kept apart so
 the row a run emits can be rebuilt from a different collector -- and so the
-schema tests do not need a game to run.
-"""
+schema tests do not need a game to run."""
 
 from __future__ import annotations
 
@@ -24,25 +21,7 @@ if TYPE_CHECKING:  # `segmented_turn` never imports this module, so no cycle
 
 SCHEMA_VERSION = "exp13_w1_segment_v1"
 
-# WHY A ROW CAN BE IN THE DATASET AND OUT OF THE LABEL POOL.
-#
-# `PLAN_W1.md` §Pinned frame scores an agent terminal failure (`decode_failed:*`
-# and friends) as 0 trophies and non-completion, kept in the intention-to-treat
-# denominator, never dropped. It says nothing about what that game's RECORDED
-# rows are worth, and the two questions are genuinely separate: the game is a
-# real sample of the policy's outcome distribution and a broken sample of its
-# decision distribution, because its last decision is the one the driver could
-# not carry out.
-#
-# Ruihan's ruling (2026-08-08): exclude the WHOLE failed game from the label
-# pool, not just the offending row. One game in 180 is a negligible cost, and
-# salvaging a prefix would mean arguing which of its rows are still valid.
-#
-# The rows stay in `records.jsonl.gz` -- they are provenance, the coverage gate
-# still requires every nominal index to appear, and the census still counts
-# them -- and carry this key instead. Exactly like the turn-1 rows whose
-# `candidate_groups == []`: excluded by an explicit, counted rule, so
-# "excluded on purpose" and "the recorder lost rows" can never look alike.
+
 LABEL_POOL_EXCLUDED_KEY = "label_pool_excluded"
 
 
@@ -66,9 +45,7 @@ def is_label_pool_excluded(record: dict[str, Any]) -> bool:
 
 
 def in_label_pool(record: dict[str, Any]) -> bool:
-    """True iff this row is labellable: it has candidate groups AND was not
-    excluded. The label pool's own definition, and the denominator every
-    per-decision cost in `w1_readouts` divides by."""
+    """In label pool."""
     return bool(record.get("candidate_groups")) and not is_label_pool_excluded(record)
 
 
@@ -290,16 +267,7 @@ def compare_action_identity(
 
 
 class SegmentRecorder:
-    """The per-segment W1 rows, rebuilt from `SegmentedTurn`'s OWN hooks.
-
-    These rows used to be emitted by a copy of the segment loop that lived
-    inside `eval_versus_fullgame.play_out_game`. exp16 W3 moved that loop
-    into `tools/segmented_turn.py` so the duel and the driver cannot drift,
-    which turned a driver-local recorder into a hook on dead code: it raises
-    nothing, it just never records. This class is the re-attachment, and it
-    uses only the shared loop's two public hooks.
-
-    - `decide` is called exactly once per segment, with the imagined clone
+    """- `decide` is called exactly once per segment, with the imagined clone
       the recommender is actually handed. That is what OPENS a row: it is
       the only place both the imagined decision state and the full
       recommendation (candidate groups included) are visible.
@@ -319,8 +287,7 @@ class SegmentRecorder:
     own record of it.
 
     The rows are the raw payloads `build_segment_record` consumes; this
-    class deliberately does no schema work, so the two stay separable.
-    """
+    class deliberately does no schema work, so the two stay separable."""
 
     def __init__(
         self,
